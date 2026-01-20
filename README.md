@@ -24,7 +24,7 @@ A **production-grade ML monitoring system** demonstrating drift detection, autom
 
 ```bash
 # Clone and start all services
-git clone https://github.com/example/pmmds.git
+git clone https://github.com/aksh-ay06/pmmds.git
 cd pmmds/infra/compose
 docker compose up -d
 
