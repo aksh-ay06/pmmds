@@ -11,6 +11,7 @@ from apps.api.db import PredictionLogDB, get_db_session
 from apps.api.models import get_model_loader
 from apps.api.schemas import PredictionLog, PredictionRequest, PredictionResponse
 from shared.utils import get_logger
+from shared.validation import validate_inference_payload
 
 logger = get_logger(__name__)
 router = APIRouter(tags=["inference"])
@@ -100,12 +101,38 @@ async def predict(
     start_time = time.perf_counter()
 
     try:
+        # Extract features as dict
+        features_dict = request.features.model_dump()
+
+        # Validate inference payload before prediction
+        validation_result = validate_inference_payload(features_dict)
+        if not validation_result.success:
+            logger.warning(
+                "validation_failed",
+                request_id=str(request.request_id),
+                errors=validation_result.errors,
+                warnings=validation_result.warnings,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "message": "Inference payload validation failed",
+                    "errors": validation_result.errors,
+                    "warnings": validation_result.warnings,
+                },
+            )
+
+        # Log warnings even if validation passed
+        if validation_result.warnings:
+            logger.info(
+                "validation_warnings",
+                request_id=str(request.request_id),
+                warnings=validation_result.warnings,
+            )
+
         # Get model
         model_loader = get_model_loader()
         model = model_loader.get_current()
-
-        # Extract features as dict
-        features_dict = request.features.model_dump()
 
         # Run inference
         prediction, probability = model.predict(features_dict)

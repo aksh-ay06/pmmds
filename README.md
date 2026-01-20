@@ -113,6 +113,74 @@ pmm-drift-system/
 | `/api/v1/predict` | POST | Generate prediction |
 | `/docs` | GET | OpenAPI documentation |
 
+## Data Validation
+
+PMMDS uses Great Expectations for comprehensive data validation at multiple stages.
+
+### Training Data Validation
+
+Before model training, the dataset is validated against predefined expectations:
+
+- **Missing values**: Checks for nulls/NaNs in required columns
+- **Type validation**: Ensures correct data types (categorical vs numeric)
+- **Value constraints**: Categorical features must be in allowed value sets
+- **Range validation**: Numeric features must be within expected ranges
+
+Training validation results are logged as MLflow artifacts for auditability.
+
+```python
+# Training with validation (default)
+from pipelines.train.trainer import train
+train(experiment_name="churn-training")
+
+# Disable validation for debugging
+train(experiment_name="churn-training", validate_data=False)
+```
+
+### Inference Payload Validation
+
+Every prediction request is validated before inference:
+
+| Check | Description | HTTP Response |
+|-------|-------------|---------------|
+| Missing features | All required features must be present | 400 Bad Request |
+| Invalid categorical | Values must be in allowed sets | 400 Bad Request |
+| Invalid numeric | Must be numbers within expected ranges | 400 Bad Request |
+| Unknown features | Extra features trigger warnings | 200 (with warnings logged) |
+
+### Validation Error Response
+
+When validation fails, the API returns HTTP 400 with error details:
+
+```json
+{
+  "detail": {
+    "message": "Inference payload validation failed",
+    "errors": [
+      "Missing required feature: tenure",
+      "Invalid value for contract: 'Annual'. Expected one of: Month-to-month, One year, Two year"
+    ],
+    "warnings": []
+  }
+}
+```
+
+### Feature Expectations
+
+**Categorical Features** (allowed values):
+- `gender`: Male, Female
+- `contract`: Month-to-month, One year, Two year
+- `payment_method`: Electronic check, Mailed check, Bank transfer (automatic), Credit card (automatic)
+- `internet_service`: DSL, Fiber optic, No
+- Binary (Yes/No): partner, dependents, phone_service, paperless_billing, online_security, online_backup, device_protection, tech_support, streaming_tv, streaming_movies
+- Binary (Yes/No/No internet service, or Yes/No/No phone service): multiple_lines
+
+**Numeric Features**:
+- `tenure`: 0-100 (months)
+- `monthly_charges`: 0-200 ($)
+- `total_charges`: 0-10000 ($)
+- `senior_citizen`: 0 or 1
+
 ## Development
 
 ```bash

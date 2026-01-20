@@ -43,6 +43,9 @@ dependencies = [
     "scikit-learn>=1.4.0",
     "pandas>=2.2.0",
     "mlflow>=2.10.0",
+    
+    # Data validation
+    "great-expectations>=0.18.0",
 ]
 
 [project.optional-dependencies]
@@ -65,7 +68,7 @@ ml = [
 ]
 
 monitoring = [
-    "great-expectations>=0.18.0",
+    # Additional monitoring tools (GE is now in core)
     "scipy>=1.12.0",
 ]
 

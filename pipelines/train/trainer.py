@@ -30,6 +30,7 @@ from shared.data.dataset import (
     load_dataset,
 )
 from shared.utils import get_logger
+from shared.validation import validate_dataframe
 
 logger = get_logger(__name__)
 settings = get_settings()
@@ -168,12 +169,14 @@ class ChurnModelTrainer:
         self,
         train_path: str | Path,
         test_path: str | Path,
+        validate_data: bool = True,
     ) -> tuple[Pipeline, TrainingMetrics, str]:
         """Train model and log to MLflow.
 
         Args:
             train_path: Path to training data CSV.
             test_path: Path to test data CSV.
+            validate_data: Whether to validate data before training.
 
         Returns:
             Tuple of (trained_pipeline, metrics, run_id).
@@ -185,6 +188,37 @@ class ChurnModelTrainer:
         # Load data
         train_df = load_dataset(train_path)
         test_df = load_dataset(test_path)
+
+        # Validate data if enabled
+        if validate_data:
+            logger.info("validating_training_data")
+            train_validation = validate_dataframe(train_df, include_target=True)
+            if not train_validation.success:
+                logger.error(
+                    "training_data_validation_failed",
+                    errors=train_validation.errors,
+                )
+                raise ValueError(
+                    f"Training data validation failed: {train_validation.errors}"
+                )
+            logger.info(
+                "training_data_validated",
+                warnings=len(train_validation.warnings),
+            )
+
+            test_validation = validate_dataframe(test_df, include_target=True)
+            if not test_validation.success:
+                logger.error(
+                    "test_data_validation_failed",
+                    errors=test_validation.errors,
+                )
+                raise ValueError(
+                    f"Test data validation failed: {test_validation.errors}"
+                )
+            logger.info(
+                "test_data_validated",
+                warnings=len(test_validation.warnings),
+            )
 
         X_train, y_train = get_feature_target_split(train_df, TARGET_COLUMN)
         X_test, y_test = get_feature_target_split(test_df, TARGET_COLUMN)
@@ -243,6 +277,18 @@ class ChurnModelTrainer:
             with open(stats_path, "w") as f:
                 json.dump(train_stats, f, indent=2, default=str)
             mlflow.log_artifact(str(stats_path), "data")
+
+            # Log validation results if validation was performed
+            if validate_data:
+                validation_path = Path("/tmp/validation_results.json")
+                validation_results = {
+                    "train_validation": train_validation.to_dict(),
+                    "test_validation": test_validation.to_dict(),
+                }
+                with open(validation_path, "w") as f:
+                    json.dump(validation_results, f, indent=2, default=str)
+                mlflow.log_artifact(str(validation_path), "validation")
+                mlflow.log_param("data_validated", True)
 
             # Log model with signature
             from mlflow.models import infer_signature
