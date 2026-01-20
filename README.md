@@ -91,11 +91,17 @@ Open http://localhost:5000 to see experiments, runs, and registered models.
 ```
 pmm-drift-system/
 ├── apps/
-│   └── api/           # FastAPI inference service
+│   ├── api/           # FastAPI inference service
+│   └── monitor/       # Drift monitoring service
 ├── pipelines/
 │   └── train/         # Model training pipeline
 ├── scripts/           # CLI scripts
-├── shared/            # Common utilities
+├── shared/
+│   ├── config/        # Configuration management
+│   ├── data/          # Dataset utilities
+│   ├── drift/         # Drift detection metrics
+│   ├── utils/         # Logging and utilities
+│   └── validation/    # Data validation
 ├── infra/
 │   ├── docker/        # Dockerfiles
 │   ├── compose/       # Docker Compose configs
@@ -180,6 +186,97 @@ When validation fails, the API returns HTTP 400 with error details:
 - `monthly_charges`: 0-200 ($)
 - `total_charges`: 0-10000 ($)
 - `senior_citizen`: 0 or 1
+
+## Drift Monitoring
+
+PMMDS monitors feature and prediction drift by comparing inference data against the training (reference) distribution.
+
+### Drift Metrics
+
+**Population Stability Index (PSI)** is used to detect distribution shifts:
+
+| PSI Value | Interpretation | Action |
+|-----------|---------------|--------|
+| < 0.1 | No significant change | None |
+| 0.1 - 0.2 | Moderate change | Monitor |
+| 0.2 - 0.25 | Significant change | Investigate |
+| ≥ 0.25 | Major change | Action required |
+
+Additional metrics computed:
+- **KL Divergence**: Asymmetric divergence measure
+- **JS Divergence**: Symmetric, bounded divergence
+
+### Running Drift Detection
+
+```bash
+# Run drift monitoring
+make monitor
+
+# With drifted traffic for testing
+make seed-traffic        # Generate normal traffic
+python scripts/seed_traffic.py --drift --count 200  # Generate drifted traffic
+make monitor             # Detect drift
+```
+
+### Drift Thresholds (Configurable)
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `PMMDS_DRIFT_PSI_THRESHOLD` | 0.2 | PSI threshold per feature |
+| `PMMDS_DRIFT_MIN_DRIFT_FEATURES` | 3 | Min features to trigger alert |
+| `PMMDS_DRIFT_CURRENT_WINDOW_HOURS` | 24 | Recent data window |
+| `PMMDS_DRIFT_MIN_SAMPLES_REQUIRED` | 100 | Minimum samples needed |
+
+### Drift Detection Flow
+
+```
+┌─────────────────┐     ┌─────────────────┐
+│ Reference Data  │     │ Recent Inference│
+│ (Training Set)  │     │ (24h Window)    │
+└────────┬────────┘     └────────┬────────┘
+         │                       │
+         └──────────┬────────────┘
+                    ▼
+         ┌─────────────────────┐
+         │  Compute PSI/KL/JS  │
+         │  for each feature   │
+         └──────────┬──────────┘
+                    ▼
+         ┌─────────────────────┐
+         │ Check Thresholds    │
+         │ ≥3 features > 0.2?  │
+         └──────────┬──────────┘
+                    ▼
+         ┌─────────────────────┐
+         │ Store in Postgres   │
+         │ Create Alert if     │
+         │ drift detected      │
+         └─────────────────────┘
+```
+
+### Database Tables
+
+| Table | Purpose |
+|-------|---------|
+| `drift_metrics` | Stores drift detection results |
+| `drift_alerts` | Tracks alerts and acknowledgments |
+| `reference_datasets` | Reference dataset metadata |
+
+### Scheduled Monitoring (Prefect)
+
+```bash
+# Install orchestration dependencies
+pip install -e ".[orchestration]"
+
+# Run via Prefect flow
+python scripts/monitor.py --prefect
+
+# Deploy scheduled flow (hourly)
+python scripts/monitor.py --deploy --interval 1
+
+# Start Prefect agent
+prefect agent start -q default
+```
 
 ## Development
 
