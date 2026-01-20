@@ -1,0 +1,59 @@
+# PMMDS - Production ML Monitoring & Drift Detection System
+# Docker Compose configuration for local development
+
+services:
+  # PostgreSQL database
+  postgres:
+    image: postgres:15-alpine
+    container_name: pmmds-postgres
+    environment:
+      POSTGRES_USER: pmmds
+      POSTGRES_PASSWORD: pmmds
+      POSTGRES_DB: pmmds
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../sql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pmmds -d pmmds"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # FastAPI inference service
+  api:
+    build:
+      context: ../..
+      dockerfile: infra/docker/api.Dockerfile
+    container_name: pmmds-api
+    environment:
+      PMMDS_DB_HOST: postgres
+      PMMDS_DB_PORT: 5432
+      PMMDS_DB_USER: pmmds
+      PMMDS_DB_PASSWORD: pmmds
+      PMMDS_DB_NAME: pmmds
+      PMMDS_API_DEBUG: "false"
+      PMMDS_LOG_LEVEL: INFO
+      PMMDS_LOG_JSON: "true"
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
+      interval: 30s
+      timeout: 10s
+      start_period: 10s
+      retries: 3
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  default:
+    name: pmmds-network

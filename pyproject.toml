@@ -1,0 +1,126 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pmmds"
+version = "0.1.0"
+description = "Production ML Monitoring & Drift Detection System"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "PMMDS Team" }]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+dependencies = [
+    # Web framework
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.27.0",
+    "pydantic>=2.6.0",
+    "pydantic-settings>=2.1.0",
+    
+    # Database
+    "sqlalchemy>=2.0.25",
+    "asyncpg>=0.29.0",
+    "greenlet>=3.0.0",
+    
+    # Logging
+    "structlog>=24.1.0",
+    
+    # Utilities
+    "httpx>=0.26.0",
+    "numpy>=1.26.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=4.1.0",
+    "httpx>=0.26.0",
+    "ruff>=0.2.0",
+    "mypy>=1.8.0",
+    "black>=24.1.0",
+    "pre-commit>=3.6.0",
+]
+
+ml = [
+    "scikit-learn>=1.4.0",
+    "pandas>=2.2.0",
+    "mlflow>=2.10.0",
+]
+
+monitoring = [
+    "great-expectations>=0.18.0",
+    "scipy>=1.12.0",
+]
+
+orchestration = [
+    "prefect>=2.14.0",
+]
+
+all = [
+    "pmmds[dev,ml,monitoring,orchestration]",
+]
+
+[project.urls]
+Homepage = "https://github.com/example/pmmds"
+Documentation = "https://github.com/example/pmmds#readme"
+Repository = "https://github.com/example/pmmds"
+
+[tool.setuptools.packages.find]
+include = ["apps*", "shared*", "pipelines*"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 88
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # Pyflakes
+    "I",      # isort
+    "B",      # flake8-bugbear
+    "C4",     # flake8-comprehensions
+    "UP",     # pyupgrade
+    "ARG",    # flake8-unused-arguments
+    "SIM",    # flake8-simplify
+]
+ignore = [
+    "E501",   # line too long (handled by black)
+    "B008",   # do not perform function calls in argument defaults
+    "B904",   # raise without from inside except
+]
+
+[tool.ruff.per-file-ignores]
+"tests/*" = ["ARG"]
+
+[tool.ruff.isort]
+known-first-party = ["apps", "shared", "pipelines"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_ignores = true
+disallow_untyped_defs = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-v --cov=apps --cov=shared --cov-report=term-missing"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
+
+[tool.black]
+line-length = 88
+target-version = ["py311"]
+include = '\.pyi?$'
