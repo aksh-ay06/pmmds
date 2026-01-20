@@ -387,6 +387,87 @@ curl -X POST http://localhost:8000/model/reload
 - **Staging**: Challenger model compared against champion
 - **Production**: Model aliased as "production" in MLflow
 
+## Observability
+
+PMMDS provides comprehensive observability through metrics and structured logging.
+
+### Metrics Endpoints
+
+| Endpoint | Format | Description |
+|----------|--------|-------------|
+| `/metrics` | Prometheus | Prometheus scrape endpoint |
+| `/metrics/json` | JSON | Human-readable metrics |
+
+### Available Metrics
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `pmmds_requests_total` | Counter | method, endpoint, status | Total HTTP requests |
+| `pmmds_request_latency_seconds` | Histogram | method, endpoint | Request latency distribution |
+| `pmmds_predictions_total` | Counter | model_name, model_version, prediction | Total predictions |
+| `pmmds_prediction_latency_seconds` | Histogram | model_name, model_version | Model inference latency |
+| `pmmds_errors_total` | Counter | endpoint, error_type | Total errors |
+| `pmmds_validation_failures_total` | Counter | endpoint, failure_type | Validation failures |
+| `pmmds_drift_events_total` | Counter | drift_type, severity | Drift detection events |
+| `pmmds_drift_checks_total` | Counter | model_name | Drift checks performed |
+| `pmmds_model_reloads_total` | Counter | model_name | Model reloads |
+| `pmmds_retraining_runs_total` | Counter | trigger_type, outcome | Retraining runs |
+| `pmmds_promotions_total` | Counter | from_version, to_version | Model promotions |
+| `pmmds_uptime_seconds` | Gauge | - | Application uptime |
+
+### Prometheus Integration
+
+The API exposes metrics at `/metrics` in Prometheus format:
+
+```bash
+# Scrape metrics
+curl http://localhost:8000/metrics
+
+# Example output
+# HELP pmmds_requests_total Total number of requests
+# TYPE pmmds_requests_total counter
+pmmds_requests_total{method="POST",endpoint="/api/v1/predict",status="200"} 1542
+pmmds_requests_total{method="GET",endpoint="/healthz",status="200"} 89
+```
+
+### JSON Metrics
+
+For debugging and dashboards:
+
+```bash
+curl http://localhost:8000/metrics/json | jq
+```
+
+### Structured Logging
+
+All logs are JSON-formatted for easy parsing:
+
+```json
+{
+  "event": "prediction_completed",
+  "timestamp": "2025-01-20T10:15:30.123456+00:00",
+  "level": "info",
+  "logger": "apps.api.routes.predict",
+  "request_id": "abc123",
+  "prediction": 1,
+  "probability": 0.85,
+  "latency_ms": 12.5,
+  "model_name": "churn-classifier",
+  "model_version": "3"
+}
+```
+
+### Docker Compose Labels
+
+The API service includes Prometheus labels for service discovery:
+
+```yaml
+labels:
+  - "prometheus.scrape=true"
+  - "prometheus.port=8000"
+  - "prometheus.path=/metrics"
+```
+
 ## Development
 
 ```bash

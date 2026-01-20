@@ -10,11 +10,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from apps.api.db import PredictionLogDB, get_db_session
 from apps.api.models import get_model_loader
 from apps.api.schemas import PredictionLog, PredictionRequest, PredictionResponse
-from shared.utils import get_logger
+from shared.utils import get_logger, get_metrics
 from shared.validation import validate_inference_payload
 
 logger = get_logger(__name__)
 router = APIRouter(tags=["inference"])
+metrics = get_metrics()
 
 
 def compute_feature_hash(features: dict) -> str:
@@ -113,6 +114,11 @@ async def predict(
                 errors=validation_result.errors,
                 warnings=validation_result.warnings,
             )
+            # Record validation failure metric
+            metrics.record_validation_failure(
+                endpoint="/api/v1/predict",
+                failure_type="inference_payload",
+            )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail={
@@ -163,6 +169,14 @@ async def predict(
             numeric_feature_stats=extract_numeric_stats(features_dict),
         )
         db.add(prediction_log)
+
+        # Record prediction metrics
+        metrics.record_prediction(
+            model_name=model.name,
+            model_version=model.version,
+            prediction=prediction,
+            latency_seconds=latency_ms / 1000,
+        )
 
         logger.info(
             "prediction_completed",

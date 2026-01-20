@@ -81,6 +81,11 @@ services:
       start_period: 10s
       retries: 3
     restart: unless-stopped
+    # Metrics endpoint exposed at :8000/metrics for Prometheus scraping
+    labels:
+      - "prometheus.scrape=true"
+      - "prometheus.port=8000"
+      - "prometheus.path=/metrics"
 
 volumes:
   postgres_data:

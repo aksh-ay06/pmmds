@@ -27,11 +27,12 @@ from pipelines.retrain.db import PromotionBase, PromotionDecisionDB, RetrainingR
 from pipelines.train.trainer import ChurnModelTrainer, TrainingConfig, TrainingMetrics
 from shared.config import get_settings
 from shared.data.dataset import TARGET_COLUMN, get_feature_target_split, load_dataset
-from shared.utils import get_logger
+from shared.utils import get_logger, get_metrics
 from shared.validation import validate_dataframe
 
 logger = get_logger(__name__)
 settings = get_settings()
+app_metrics = get_metrics()
 
 
 @dataclass
@@ -351,6 +352,18 @@ class RetrainingService:
         with Session(self.engine) as session:
             session.add(record)
             session.commit()
+
+        # Record metrics for observability
+        outcome = "success" if status == "completed" else status
+        app_metrics.record_retraining(trigger_type=trigger_type, outcome=outcome)
+
+        if comparison and comparison.should_promote:
+            # Record promotion
+            from_version = str(int(comparison.challenger_metrics.model_version) - 1) if int(comparison.challenger_metrics.model_version) > 1 else "0"
+            app_metrics.record_promotion(
+                from_version=from_version,
+                to_version=comparison.challenger_metrics.model_version,
+            )
 
         logger.info(
             "retraining_run_recorded",

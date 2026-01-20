@@ -8,11 +8,12 @@ from sqlalchemy import text
 
 from apps.api.db import async_engine
 from shared.config import get_settings
-from shared.utils import get_logger
+from shared.utils import get_logger, get_metrics
 
 logger = get_logger(__name__)
 router = APIRouter(tags=["health"])
 settings = get_settings()
+metrics = get_metrics()
 
 
 class HealthResponse(BaseModel):
@@ -100,6 +101,13 @@ async def reload_model() -> dict:
     model = loader.reload()
 
     new_info = loader.get_model_info()
+
+    # Record metrics
+    metrics.record_model_reload(model_name=new_info.get("name", "unknown"))
+    metrics.set_current_model(
+        model_name=new_info.get("name", "unknown"),
+        model_version=new_info.get("version", "unknown"),
+    )
 
     logger.info(
         "model_reloaded",

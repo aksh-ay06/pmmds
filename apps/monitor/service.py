@@ -25,9 +25,10 @@ from shared.data.dataset import (
     load_dataset,
 )
 from shared.drift.metrics import DriftMetrics, DriftResult, DriftSeverity
-from shared.utils import get_logger
+from shared.utils import get_logger, get_metrics
 
 logger = get_logger(__name__)
+app_metrics = get_metrics()
 
 
 class DriftMonitorService:
@@ -335,6 +336,14 @@ class DriftMonitorService:
                     run_id=run_id,
                     timestamp=timestamp,
                     drift_result=drift_result,
+                )
+
+            # Record drift metrics for observability
+            app_metrics.record_drift_check(model_name=model_name)
+            if drift_result.drift_detected:
+                app_metrics.record_drift_event(
+                    drift_type="feature",
+                    severity=drift_result.severity.value,
                 )
 
             logger.info(

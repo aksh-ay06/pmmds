@@ -7,9 +7,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from apps.api.db import init_db
-from apps.api.routes import health_router, predict_router
+from apps.api.middleware import MetricsMiddleware, RequestLoggingMiddleware
+from apps.api.routes import health_router, metrics_router, predict_router
 from shared.config import get_settings
-from shared.utils import get_logger, setup_logging
+from shared.utils import get_logger, get_metrics, setup_logging
 
 settings = get_settings()
 
@@ -25,6 +26,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     Startup:
     - Initialize database tables
     - Warm up model cache
+    - Initialize metrics
 
     Shutdown:
     - Cleanup resources
@@ -41,6 +43,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     model_loader = get_model_loader()
     model = model_loader.get_current()
     logger.info("model_loaded", name=model.name, version=model.version)
+
+    # Initialize metrics with current model info
+    metrics = get_metrics()
+    metrics.set_current_model(model.name, model.version)
 
     yield
 
@@ -63,6 +69,18 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
+    # Metrics middleware (must be added first to capture all requests)
+    app.add_middleware(
+        MetricsMiddleware,
+        exclude_paths=["/healthz", "/ready", "/metrics", "/docs", "/redoc", "/openapi.json"],
+    )
+
+    # Request logging middleware
+    app.add_middleware(
+        RequestLoggingMiddleware,
+        exclude_paths=["/healthz", "/ready", "/metrics", "/docs", "/redoc", "/openapi.json"],
+    )
+
     # CORS middleware
     app.add_middleware(
         CORSMiddleware,
@@ -74,6 +92,7 @@ def create_app() -> FastAPI:
 
     # Include routers
     app.include_router(health_router)
+    app.include_router(metrics_router)
     app.include_router(predict_router, prefix="/api/v1")
 
     return app
