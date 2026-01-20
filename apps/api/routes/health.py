@@ -66,3 +66,15 @@ async def readiness_check() -> dict[str, str]:
     Simple check that the API can serve requests.
     """
     return {"status": "ready"}
+
+
+@router.get("/model", status_code=status.HTTP_200_OK)
+async def model_info() -> dict:
+    """Get information about the currently loaded model.
+
+    Returns model name, version, and source.
+    """
+    from apps.api.models import get_model_loader
+
+    loader = get_model_loader()
+    return loader.get_model_info()

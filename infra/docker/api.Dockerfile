@@ -15,6 +15,7 @@ WORKDIR /app
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Builder stage
@@ -44,6 +45,7 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 # Copy application code
 COPY apps/ ./apps/
 COPY shared/ ./shared/
+COPY pipelines/ ./pipelines/
 
 # Set ownership
 RUN chown -R appuser:appuser /app

@@ -4,11 +4,30 @@ A production-grade ML monitoring system demonstrating drift detection, automated
 
 ## Quick Start
 
+### 1. Start Infrastructure
+
 ```bash
-# Start all services
+# Start all services (PostgreSQL, MLflow, API)
 cd infra/compose
 docker compose up -d
 
+# Verify services are running
+docker compose ps
+```
+
+### 2. Train Initial Model
+
+```bash
+# Download and prepare Telco Churn dataset
+make download-data
+
+# Train model and register in MLflow
+make train
+```
+
+### 3. Test the API
+
+```bash
 # Check health
 curl http://localhost:8000/healthz
 
@@ -40,6 +59,10 @@ curl -X POST http://localhost:8000/api/v1/predict \
   }'
 ```
 
+### 4. View MLflow UI
+
+Open http://localhost:5000 to see experiments, runs, and registered models.
+
 ## Architecture
 
 ```
@@ -50,10 +73,18 @@ curl -X POST http://localhost:8000/api/v1/predict \
                            │
                            ▼
                     ┌─────────────┐
-                    │   Model     │
-                    │  (MLflow)   │
+                    │   MLflow    │
+                    │  Registry   │
                     └─────────────┘
 ```
+
+### Services
+
+| Service | Port | Description |
+|---------|------|-------------|
+| API | 8000 | FastAPI inference service |
+| MLflow | 5000 | Model tracking & registry |
+| PostgreSQL | 5432 | Metadata store |
 
 ## Project Structure
 
@@ -61,7 +92,9 @@ curl -X POST http://localhost:8000/api/v1/predict \
 pmm-drift-system/
 ├── apps/
 │   └── api/           # FastAPI inference service
-├── pipelines/         # Training and retraining flows
+├── pipelines/
+│   └── train/         # Model training pipeline
+├── scripts/           # CLI scripts
 ├── shared/            # Common utilities
 ├── infra/
 │   ├── docker/        # Dockerfiles

@@ -1,19 +1,18 @@
-"""Model loader stub.
+"""Model loader with MLflow registry support.
 
-Provides a dummy model for initial development.
-Will be replaced with MLflow model loading in milestone 2.
+Loads models from MLflow registry with fallback to dummy model.
 """
 
 import random
+import time
 from dataclasses import dataclass
-from functools import lru_cache
 from typing import Any, Protocol
 
-import numpy as np
-
+from shared.config import get_settings
 from shared.utils import get_logger
 
 logger = get_logger(__name__)
+settings = get_settings()
 
 
 class Model(Protocol):
@@ -43,7 +42,7 @@ class Model(Protocol):
 
 @dataclass
 class DummyModel:
-    """Stub model for development.
+    """Stub model for development/fallback.
 
     Returns random predictions with realistic probability distribution.
     Simulates ~27% churn rate (typical for telco datasets).
@@ -119,46 +118,235 @@ class DummyModel:
         return prediction, round(probability, 4)
 
 
-class ModelLoader:
-    """Manages model loading and caching.
+class MLflowModel:
+    """Wrapper for MLflow sklearn model."""
 
-    Currently loads DummyModel. Will integrate with MLflow registry.
-    """
-
-    def __init__(self) -> None:
-        """Initialize model loader."""
-        self._models: dict[str, Model] = {}
-        logger.info("model_loader_initialized")
-
-    def load(self, name: str = "default", version: str = "latest") -> Model:
-        """Load a model by name and version.
+    def __init__(
+        self,
+        model: Any,
+        model_name: str,
+        model_version: str,
+    ) -> None:
+        """Initialize MLflow model wrapper.
 
         Args:
-            name: Model name (ignored for stub).
-            version: Model version (ignored for stub).
+            model: Loaded sklearn pipeline from MLflow.
+            model_name: Registered model name.
+            model_version: Model version string.
+        """
+        self._model = model
+        self._name = model_name
+        self._version = model_version
+
+    @property
+    def name(self) -> str:
+        """Model name."""
+        return self._name
+
+    @property
+    def version(self) -> str:
+        """Model version."""
+        return self._version
+
+    def predict(self, features: dict[str, Any]) -> tuple[int, float]:
+        """Generate prediction using MLflow model.
+
+        Args:
+            features: Input feature dictionary.
+
+        Returns:
+            Tuple of (predicted_class, probability).
+        """
+        import pandas as pd
+
+        # Convert to DataFrame (sklearn pipeline expects DataFrame)
+        df = pd.DataFrame([features])
+
+        # Get prediction and probability
+        prediction = int(self._model.predict(df)[0])
+        probabilities = self._model.predict_proba(df)[0]
+        probability = float(probabilities[1])  # Probability of class 1 (churn)
+
+        return prediction, round(probability, 4)
+
+
+class ModelLoader:
+    """Manages model loading from MLflow registry with fallback."""
+
+    def __init__(
+        self,
+        tracking_uri: str | None = None,
+        model_name: str | None = None,
+        model_alias: str | None = None,
+        fallback_to_dummy: bool = True,
+    ) -> None:
+        """Initialize model loader.
+
+        Args:
+            tracking_uri: MLflow tracking server URI.
+            model_name: Registered model name.
+            model_alias: Model alias (e.g., 'production').
+            fallback_to_dummy: Use dummy model if MLflow unavailable.
+        """
+        self._tracking_uri = tracking_uri or settings.mlflow_tracking_uri
+        self._model_name = model_name or settings.model_name
+        self._model_alias = model_alias or settings.model_alias
+        self._fallback_to_dummy = fallback_to_dummy
+        self._cached_model: Model | None = None
+        self._model_load_time: float | None = None
+
+        logger.info(
+            "model_loader_initialized",
+            tracking_uri=self._tracking_uri,
+            model_name=self._model_name,
+            model_alias=self._model_alias,
+        )
+
+    def _load_from_mlflow(self) -> Model | None:
+        """Attempt to load model from MLflow registry.
+
+        Returns:
+            MLflowModel if successful, None otherwise.
+        """
+        try:
+            import mlflow
+
+            mlflow.set_tracking_uri(self._tracking_uri)
+
+            # Load model using alias
+            model_uri = f"models:/{self._model_name}@{self._model_alias}"
+            logger.info("loading_model_from_mlflow", model_uri=model_uri)
+
+            # Get model version info
+            client = mlflow.MlflowClient()
+            model_version = client.get_model_version_by_alias(
+                name=self._model_name,
+                alias=self._model_alias,
+            )
+            version_str = model_version.version
+
+            # Load the model
+            loaded_model = mlflow.sklearn.load_model(model_uri)
+
+            logger.info(
+                "model_loaded_from_mlflow",
+                model_name=self._model_name,
+                version=version_str,
+                alias=self._model_alias,
+            )
+
+            return MLflowModel(
+                model=loaded_model,
+                model_name=self._model_name,
+                model_version=version_str,
+            )
+
+        except Exception as e:
+            logger.warning(
+                "mlflow_model_load_failed",
+                error=str(e),
+                error_type=type(e).__name__,
+                model_name=self._model_name,
+                model_alias=self._model_alias,
+            )
+            return None
+
+    def load(self, force_reload: bool = False) -> Model:
+        """Load the model, using cache if available.
+
+        Args:
+            force_reload: Force reload from MLflow even if cached.
 
         Returns:
             Loaded model instance.
         """
-        cache_key = f"{name}:{version}"
+        if self._cached_model is not None and not force_reload:
+            return self._cached_model
 
-        if cache_key not in self._models:
-            logger.info("loading_model", name=name, version=version)
-            # TODO: Replace with MLflow model loading
-            self._models[cache_key] = DummyModel()
+        start_time = time.perf_counter()
 
-        return self._models[cache_key]
+        # Try MLflow first
+        model = self._load_from_mlflow()
+
+        # Fallback to dummy if needed
+        if model is None:
+            if self._fallback_to_dummy:
+                logger.warning(
+                    "falling_back_to_dummy_model",
+                    reason="MLflow model not available",
+                )
+                model = DummyModel()
+            else:
+                raise RuntimeError(
+                    f"Failed to load model '{self._model_name}' from MLflow "
+                    f"and fallback is disabled"
+                )
+
+        self._cached_model = model
+        self._model_load_time = time.perf_counter() - start_time
+
+        logger.info(
+            "model_ready",
+            model_name=model.name,
+            model_version=model.version,
+            load_time_ms=round(self._model_load_time * 1000, 2),
+        )
+
+        return model
 
     def get_current(self) -> Model:
-        """Get the currently active model.
+        """Get the currently loaded model.
 
         Returns:
-            Current production model.
+            Current model (loads if not yet loaded).
         """
         return self.load()
 
+    def reload(self) -> Model:
+        """Force reload model from MLflow.
 
-@lru_cache
+        Returns:
+            Freshly loaded model.
+        """
+        return self.load(force_reload=True)
+
+    def get_model_info(self) -> dict[str, Any]:
+        """Get information about the current model.
+
+        Returns:
+            Dictionary with model metadata.
+        """
+        model = self.get_current()
+        return {
+            "name": model.name,
+            "version": model.version,
+            "tracking_uri": self._tracking_uri,
+            "alias": self._model_alias,
+            "load_time_ms": (
+                round(self._model_load_time * 1000, 2)
+                if self._model_load_time
+                else None
+            ),
+        }
+
+
+# Global model loader instance
+_model_loader: ModelLoader | None = None
+
+
 def get_model_loader() -> ModelLoader:
-    """Get singleton model loader instance."""
-    return ModelLoader()
+    """Get singleton model loader instance.
+
+    Returns:
+        ModelLoader instance.
+    """
+    global _model_loader
+    if _model_loader is None:
+        _model_loader = ModelLoader()
+    return _model_loader
+
+
+def reset_model_loader() -> None:
+    """Reset model loader (for testing)."""
+    global _model_loader
+    _model_loader = None

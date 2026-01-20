@@ -32,9 +32,11 @@ class Settings(BaseSettings):
     db_password: str = "pmmds"
     db_name: str = "pmmds"
 
-    # Model settings
-    model_name: str = "baseline"
-    model_version: str = "latest"
+    # MLflow settings
+    mlflow_tracking_uri: str = "http://localhost:5000"
+    model_name: str = "churn-classifier"
+    model_alias: str = "production"
+    model_fallback_to_dummy: bool = True  # Use dummy model if MLflow unavailable
 
     # Logging
     log_level: str = "INFO"
