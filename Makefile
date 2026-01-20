@@ -1,4 +1,4 @@
-.PHONY: help up down logs test lint clean download-data train monitor seed-traffic
+.PHONY: help up down logs test lint clean download-data train monitor seed-traffic retrain
 
 help:
 	@echo "PMMDS - Production ML Monitoring & Drift Detection System"
@@ -14,6 +14,7 @@ help:
 	@echo "  make train         - Train initial model"
 	@echo "  make monitor       - Run drift monitoring"
 	@echo "  make seed-traffic  - Generate sample predictions"
+	@echo "  make retrain       - Run automated retraining"
 
 up:
 	cd infra/compose && docker compose up -d
@@ -42,6 +43,9 @@ monitor:
 
 seed-traffic:
 	python scripts/seed_traffic.py
+
+retrain:
+	python scripts/retrain.py
 
 clean:
 	cd infra/compose && docker compose down -v

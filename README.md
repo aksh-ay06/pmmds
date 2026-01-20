@@ -278,6 +278,115 @@ python scripts/monitor.py --deploy --interval 1
 prefect agent start -q default
 ```
 
+## Automated Retraining
+
+When drift exceeds thresholds (≥3 features with PSI > 0.2), PMMDS automatically retrains and promotes a new model.
+
+### Model Promotion Workflow
+
+```
+┌─────────────────┐
+│ Drift Detected  │
+│ ≥3 features     │
+└────────┬────────┘
+         ▼
+┌─────────────────┐
+│ Train Challenger│
+│ Model           │
+└────────┬────────┘
+         ▼
+┌─────────────────┐
+│ Compare vs      │
+│ Champion        │
+└────────┬────────┘
+         ▼
+┌─────────────────┐    No    ┌─────────────────┐
+│ Meets Promotion │────────▶ │ Keep Champion   │
+│ Criteria?       │          │ Log Decision    │
+└────────┬────────┘          └─────────────────┘
+         │ Yes
+         ▼
+┌─────────────────┐
+│ Promote to      │
+│ Production      │
+└─────────────────┘
+```
+
+### Promotion Criteria
+
+All three must be met:
+
+| Criterion | Requirement | Description |
+|-----------|-------------|-------------|
+| **Validation** | Must pass | Training data validation |
+| **Metric Improvement** | ≥0.1% better | Primary metric (ROC-AUC) |
+| **Latency** | ≤20% slower | No significant regression |
+
+### Running Retraining
+
+```bash
+# Check drift and retrain if needed
+make retrain
+
+# Force retraining (bypass drift check)
+python scripts/retrain.py --force
+
+# View recent promotion decisions
+python scripts/retrain.py --decisions
+
+# Run via Prefect flow
+python scripts/retrain.py --prefect
+```
+
+### API Model Refresh
+
+After promotion, the API serves the new model:
+
+```bash
+# Check current model
+curl http://localhost:8000/model
+
+# Force model reload (after promotion)
+curl -X POST http://localhost:8000/model/reload
+```
+
+### Database Tables
+
+| Table | Purpose |
+|-------|---------|
+| `promotion_decisions` | Records all champion vs challenger comparisons |
+| `retraining_runs` | Tracks retraining attempts and outcomes |
+
+### Example Decision Log
+
+```json
+{
+  "decision_id": "a1b2c3d4e5f6",
+  "challenger_version": "3",
+  "promoted": true,
+  "primary_metric_improvement": 0.0042,
+  "promotion_reason": "Challenger v3 outperforms champion v2. roc_auc: 0.8456 vs 0.8414 (+0.0042). Validation passed. Latency OK (0.95x)."
+}
+```
+
+## Model Lifecycle
+
+```
+┌──────────┐     ┌──────────┐     ┌──────────┐     ┌──────────┐
+│ Training │────▶│ Registry │────▶│ Staging  │────▶│Production│
+│ Pipeline │     │ (MLflow) │     │ (Testing)│     │ (Alias)  │
+└──────────┘     └──────────┘     └──────────┘     └──────────┘
+                      │                                  ▲
+                      │                                  │
+                      └──────────────────────────────────┘
+                              Promotion Decision
+```
+
+- **Training**: Model trained and metrics logged to MLflow
+- **Registry**: Model version registered in MLflow Model Registry
+- **Staging**: Challenger model compared against champion
+- **Production**: Model aliased as "production" in MLflow
+
 ## Development
 
 ```bash

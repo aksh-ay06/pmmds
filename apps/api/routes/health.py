@@ -78,3 +78,39 @@ async def model_info() -> dict:
 
     loader = get_model_loader()
     return loader.get_model_info()
+
+
+@router.post("/model/reload", status_code=status.HTTP_200_OK)
+async def reload_model() -> dict:
+    """Reload model from MLflow registry.
+
+    Forces the API to fetch the latest production model.
+    Useful after a model promotion.
+
+    Returns:
+        New model information.
+    """
+    from apps.api.models import get_model_loader
+
+    loader = get_model_loader()
+    old_info = loader.get_model_info()
+    old_version = old_info.get("version", "unknown")
+
+    # Force reload
+    model = loader.reload()
+
+    new_info = loader.get_model_info()
+
+    logger.info(
+        "model_reloaded",
+        old_version=old_version,
+        new_version=new_info.get("version", "unknown"),
+        model_name=new_info.get("name"),
+    )
+
+    return {
+        "status": "reloaded",
+        "previous_version": old_version,
+        "current_version": new_info.get("version", "unknown"),
+        "model": new_info,
+    }
