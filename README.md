@@ -1,14 +1,31 @@
 # PMMDS - Production ML Monitoring & Drift Detection System
 
-A production-grade ML monitoring system demonstrating drift detection, automated retraining, and model lifecycle management.
+[![CI](https://github.com/example/pmmds/workflows/CI/badge.svg)](https://github.com/example/pmmds/actions)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-## Quick Start
+A **production-grade ML monitoring system** demonstrating drift detection, automated retraining, and model lifecycle management. Built to showcase FAANG-level MLE skills.
+
+## 🎯 Key Features
+
+| Feature | Description |
+|---------|-------------|
+| **Real-time Inference** | FastAPI service with <50ms P95 latency |
+| **Data Validation** | Great Expectations for training & inference |
+| **Drift Detection** | PSI-based feature drift with configurable thresholds |
+| **Automated Retraining** | Champion/challenger model comparison |
+| **Model Registry** | MLflow for versioning and promotion |
+| **Observability** | Prometheus metrics + structured JSON logging |
+| **Orchestration** | Prefect flows for all pipelines |
+
+## 🚀 Quick Start
 
 ### 1. Start Infrastructure
 
 ```bash
-# Start all services (PostgreSQL, MLflow, API)
-cd infra/compose
+# Clone and start all services
+git clone https://github.com/example/pmmds.git
+cd pmmds/infra/compose
 docker compose up -d
 
 # Verify services are running
@@ -63,19 +80,46 @@ curl -X POST http://localhost:8000/api/v1/predict \
 
 Open http://localhost:5000 to see experiments, runs, and registered models.
 
-## Architecture
+## 🏗️ Architecture
 
 ```
-┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│   Client    │────▶│  FastAPI    │────▶│  PostgreSQL │
-│             │     │  /predict   │     │  (logs)     │
-└─────────────┘     └─────────────┘     └─────────────┘
-                           │
-                           ▼
-                    ┌─────────────┐
-                    │   MLflow    │
-                    │  Registry   │
-                    └─────────────┘
+┌────────────────────────────────────────────────────────────────────────────┐
+│                              PMMDS Architecture                             │
+└────────────────────────────────────────────────────────────────────────────┘
+
+  ┌─────────────┐         ┌─────────────────────────────────────────────────┐
+  │   Client    │         │              FastAPI Service (:8000)             │
+  │  (requests) │────────▶│  /predict   /healthz   /metrics   /model        │
+  └─────────────┘         └───────────────────┬───────────────────────────────┘
+                                              │
+            ┌─────────────────────────────────┼─────────────────────────────────┐
+            │                                 │                                 │
+            ▼                                 ▼                                 ▼
+  ┌─────────────────┐           ┌─────────────────┐           ┌─────────────────┐
+  │   PostgreSQL    │           │     MLflow      │           │    Prefect      │
+  │    (:5432)      │           │    (:5000)      │           │  (Orchestration)│
+  │                 │           │                 │           │                 │
+  │ • prediction_logs│          │ • Experiments   │           │ • train_flow    │
+  │ • drift_metrics │           │ • Model Registry│           │ • monitor_flow  │
+  │ • promotions    │           │ • Artifacts     │           │ • retrain_flow  │
+  └─────────────────┘           └─────────────────┘           └─────────────────┘
+
+                          ┌─────────────────────────────────┐
+                          │        Monitoring Pipeline       │
+                          │                                 │
+                          │  Reference Data → Compare with  │
+                          │  Recent Inference → PSI Drift   │
+                          │  → Alert if threshold exceeded  │
+                          └─────────────────────────────────┘
+                                         │
+                                         ▼
+                          ┌─────────────────────────────────┐
+                          │        Retraining Pipeline       │
+                          │                                 │
+                          │  Drift Triggered → Train New    │
+                          │  → Compare vs Champion → Promote│
+                          │  → Update Production Alias      │
+                          └─────────────────────────────────┘
 ```
 
 ### Services
@@ -468,6 +512,102 @@ labels:
   - "prometheus.path=/metrics"
 ```
 
+## 📋 Operational Runbook
+
+### Common Commands
+
+```bash
+# Start all services
+make up
+
+# Stop all services
+make down
+
+# Train initial model
+make train
+
+# Generate synthetic traffic
+make seed-traffic
+
+# Run drift monitoring
+make monitor
+
+# Trigger retraining (if needed)
+make retrain
+
+# Run tests
+make test
+
+# View logs
+make logs
+```
+
+### Troubleshooting
+
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| API returns 503 | DB connection failed | Check PostgreSQL is running: `docker compose ps` |
+| Model not found | MLflow model not registered | Run `make train` to register model |
+| Drift not detected | Insufficient data | Generate more traffic: `make seed-traffic` |
+| Retraining fails | DB schema drift | Run migrations: `make migrate` |
+| High latency | Model cold start | First request warms cache; subsequent are faster |
+
+### Health Checks
+
+```bash
+# API health
+curl http://localhost:8000/healthz
+
+# Database connectivity
+docker exec pmmds-postgres pg_isready -U pmmds
+
+# MLflow health
+curl http://localhost:5000/health
+
+# View current model
+curl http://localhost:8000/model
+```
+
+### Scaling Considerations
+
+- **API**: Horizontally scalable (stateless). Deploy multiple replicas behind load balancer.
+- **Database**: Consider connection pooling (PgBouncer) for high traffic.
+- **MLflow**: Shared artifact storage (S3/GCS) for multi-node deployments.
+- **Monitoring**: Batch drift checks during off-peak hours.
+
+## 🎓 MLE Skills Demonstrated
+
+This project demonstrates production ML engineering skills valued at FAANG companies:
+
+| Skill | Implementation |
+|-------|----------------|
+| **ML Systems Design** | End-to-end pipeline: training → serving → monitoring → retraining |
+| **Data Quality** | Great Expectations for schema validation at training & inference |
+| **Model Serving** | FastAPI with async inference, <50ms P95 latency |
+| **Feature/Prediction Drift** | PSI-based drift detection with configurable thresholds |
+| **Model Registry** | MLflow with versioning, aliases, and promotion workflow |
+| **Automated Retraining** | Champion/challenger comparison with objective metrics |
+| **Observability** | Prometheus metrics, structured logging, health endpoints |
+| **Infrastructure as Code** | Docker Compose for reproducible local development |
+| **CI/CD** | GitHub Actions for lint, typecheck, test, smoke test |
+| **Code Quality** | Type hints, docstrings, ruff, black, mypy |
+
+### Resume Bullets
+
+```
+• Designed production ML monitoring system with PSI-based drift detection,
+  triggering automated retraining when ≥3 features exceed threshold (PSI > 0.2)
+
+• Implemented champion/challenger model promotion with objective criteria:
+  validation pass, metric improvement (≥0.1%), and latency constraint (≤20% slower)
+
+• Built FastAPI inference service achieving <50ms P95 latency with async
+  database logging and Prometheus metrics exposition
+
+• Deployed end-to-end MLOps pipeline using MLflow model registry,
+  Prefect orchestration, and Great Expectations data validation
+```
+
 ## Development
 
 ```bash
@@ -477,12 +617,28 @@ pip install -e ".[dev]"
 # Run tests
 pytest
 
+# Run tests with coverage
+pytest --cov=apps --cov=shared --cov-report=html
+
 # Lint
 ruff check .
 
+# Format
+black .
+
 # Type check
-mypy apps shared
+mypy apps shared pipelines
 ```
+
+### CI Pipeline
+
+The GitHub Actions workflow runs on every push and PR:
+
+1. **Lint & Format**: ruff + black
+2. **Type Check**: mypy strict mode
+3. **Tests**: pytest with coverage
+4. **Smoke Test**: Live API endpoint tests
+5. **Docker Build**: Verify image builds
 
 ## License
 
