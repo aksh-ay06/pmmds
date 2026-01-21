@@ -1,18 +1,14 @@
-# MLflow Tracking Server with PostgreSQL support
-# Custom image based on official MLflow with psycopg2 driver
+# MLflow Tracking Server (pinned to match your host)
+FROM python:3.12-slim
 
-FROM ghcr.io/mlflow/mlflow:v2.10.0
-
-# Install PostgreSQL client library, psycopg2, and curl for health checks
+# minimal deps (curl optional, psycopg2-binary avoids needing libpq-dev)
 RUN apt-get update && apt-get install -y --no-install-recommends curl \
-    && rm -rf /var/lib/apt/lists/* \
-    && pip install --no-cache-dir psycopg2-binary
+  && rm -rf /var/lib/apt/lists/*
 
-# Create artifacts directory
+RUN pip install --no-cache-dir mlflow==3.8.1 psycopg2-binary
+
 RUN mkdir -p /mlflow/artifacts
-
-# Expose MLflow port
 EXPOSE 5000
 
-# Default command
+# Note: artifacts + backend are configured via docker-compose command
 CMD ["mlflow", "server", "--host", "0.0.0.0", "--port", "5000"]

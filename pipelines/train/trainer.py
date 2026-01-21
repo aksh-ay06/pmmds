@@ -297,7 +297,7 @@ class ChurnModelTrainer:
 
             mlflow.sklearn.log_model(
                 sk_model=pipeline,
-                artifact_path="model",
+                name="model",
                 signature=signature,
                 registered_model_name=self.config.registered_model_name,
             )

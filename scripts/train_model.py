@@ -7,6 +7,7 @@ Usage:
 """
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -39,7 +40,7 @@ def main() -> None:
     parser.add_argument(
         "--mlflow-uri",
         type=str,
-        default="http://localhost:5000",
+        default=os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5000"),
         help="MLflow tracking server URI",
     )
     parser.add_argument(

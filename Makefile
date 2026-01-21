@@ -46,19 +46,19 @@ ci: lint typecheck test
 	@echo "✓ All CI checks passed!"
 
 download-data:
-	python scripts/download_data.py
+	python3 scripts/download_data.py
 
 train:
-	python scripts/train_model.py
+	MLFLOW_TRACKING_URI=http://localhost:5000 python3 scripts/train_model.py
 
 monitor:
-	python scripts/monitor.py
+	python3 scripts/monitor.py
 
 seed-traffic:
-	python scripts/seed_traffic.py
+	python3 scripts/seed_traffic.py
 
 retrain:
-	python scripts/retrain.py
+	python3 scripts/retrain.py
 
 migrate:
 	@echo "Running database migrations..."
