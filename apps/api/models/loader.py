@@ -48,7 +48,7 @@ class DummyModel:
     Simulates ~27% churn rate (typical for telco datasets).
     """
 
-    _name: str = "dummy-churn-model"
+    _name: str = settings.model_name
     _version: str = "0.0.1-stub"
     _base_churn_rate: float = 0.27
 

@@ -95,7 +95,7 @@ class DriftConfig(BaseSettings):
 
     # Reference dataset
     reference_dataset_path: str = Field(
-        default="data/processed/telco_churn.csv",
+        default="data/processed/train.csv",
         description="Path to reference dataset",
     )
     use_training_data_as_reference: bool = Field(

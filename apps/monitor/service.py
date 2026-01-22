@@ -84,6 +84,14 @@ class DriftMonitorService:
         timestamp = datetime.now(timezone.utc).isoformat()
         return hashlib.sha256(timestamp.encode()).hexdigest()[:16]
 
+    def _severity_from_psi(self, max_psi: float) -> DriftSeverity:
+        """Derive overall severity from max PSI."""
+        if max_psi >= 0.25:
+            return DriftSeverity.HIGH
+        elif max_psi >= 0.2:
+            return DriftSeverity.MEDIUM
+        return DriftSeverity.LOW
+
     def load_reference_data(self) -> pd.DataFrame:
         """Load reference dataset for comparison.
 
@@ -341,9 +349,10 @@ class DriftMonitorService:
             # Record drift metrics for observability
             app_metrics.record_drift_check(model_name=model_name)
             if drift_result.drift_detected:
+                sev = self._severity_from_psi(drift_result.max_psi)
                 app_metrics.record_drift_event(
                     drift_type="feature",
-                    severity=drift_result.severity.value,
+                    severity=sev.value,
                 )
 
             logger.info(
