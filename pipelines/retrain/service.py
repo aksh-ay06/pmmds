@@ -265,6 +265,7 @@ class RetrainingService:
                     roc_auc=challenger_metrics.roc_auc,
                     accuracy=challenger_metrics.accuracy,
                     f1=challenger_metrics.f1,
+                    model_version=challenger_version,
                 ),
                 validation_passed=True,
                 metric_improvement=True,

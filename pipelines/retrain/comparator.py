@@ -35,6 +35,8 @@ class ModelMetrics:
     p95_latency_ms: float = 0.0
     validation_passed: bool = True
     validation_errors: list[str] = field(default_factory=list)
+    model_version: str = ""
+
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
@@ -48,6 +50,7 @@ class ModelMetrics:
             "p95_latency_ms": self.p95_latency_ms,
             "validation_passed": self.validation_passed,
             "validation_errors": self.validation_errors,
+            "model_version": self.model_version,
         }
 
 
