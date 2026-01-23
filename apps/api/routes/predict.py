@@ -169,6 +169,7 @@ async def predict(
             numeric_feature_stats=extract_numeric_stats(features_dict),
         )
         db.add(prediction_log)
+        await db.commit()
 
         # Record prediction metrics
         metrics.record_prediction(
