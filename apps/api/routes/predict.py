@@ -189,7 +189,9 @@ async def predict(
         )
 
         return response
-
+    
+    except HTTPException as e:
+        raise  # Re-raise HTTP exceptions as is
     except Exception as e:
         logger.error(
             "prediction_failed",
