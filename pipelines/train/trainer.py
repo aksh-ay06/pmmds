@@ -1,6 +1,7 @@
 """Model training and evaluation."""
 
 import json
+import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -273,21 +274,27 @@ class ChurnModelTrainer:
             mlflow.log_metrics(metrics.to_dict())
 
             # Log dataset stats as artifact
-            stats_path = Path("/tmp/dataset_stats.json")
-            with open(stats_path, "w") as f:
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix="_dataset_stats.json", delete=False
+            ) as f:
                 json.dump(train_stats, f, indent=2, default=str)
-            mlflow.log_artifact(str(stats_path), "data")
+                stats_path = f.name
+            mlflow.log_artifact(stats_path, "data")
+            Path(stats_path).unlink(missing_ok=True)
 
             # Log validation results if validation was performed
             if validate_data:
-                validation_path = Path("/tmp/validation_results.json")
                 validation_results = {
                     "train_validation": train_validation.to_dict(),
                     "test_validation": test_validation.to_dict(),
                 }
-                with open(validation_path, "w") as f:
+                with tempfile.NamedTemporaryFile(
+                    mode="w", suffix="_validation_results.json", delete=False
+                ) as f:
                     json.dump(validation_results, f, indent=2, default=str)
-                mlflow.log_artifact(str(validation_path), "validation")
+                    validation_path = f.name
+                mlflow.log_artifact(validation_path, "validation")
+                Path(validation_path).unlink(missing_ok=True)
                 mlflow.log_param("data_validated", True)
 
             # Log model with signature

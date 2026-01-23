@@ -4,6 +4,7 @@ Loads models from MLflow registry with fallback to dummy model.
 """
 
 import random
+import threading
 import time
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -332,6 +333,7 @@ class ModelLoader:
 
 # Global model loader instance
 _model_loader: ModelLoader | None = None
+_model_loader_lock = threading.Lock()
 
 
 def get_model_loader() -> ModelLoader:
@@ -342,7 +344,9 @@ def get_model_loader() -> ModelLoader:
     """
     global _model_loader
     if _model_loader is None:
-        _model_loader = ModelLoader()
+        with _model_loader_lock:
+            if _model_loader is None:
+                _model_loader = ModelLoader()
     return _model_loader
 
 

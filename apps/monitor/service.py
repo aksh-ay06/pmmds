@@ -21,6 +21,7 @@ from shared.config import get_settings
 from shared.data.dataset import (
     CATEGORICAL_FEATURES,
     NUMERIC_FEATURES,
+    TARGET_COLUMN,
     compute_dataset_stats,
     load_dataset,
 )
@@ -195,35 +196,36 @@ class DriftMonitorService:
             # Extract binned stats
             stats = row.numeric_feature_stats or {}
 
-            # Reconstruct approximate values from bins
+            # Reconstruct approximate values from bins using midpoints
+            # (deterministic to ensure reproducible drift results)
             record = {}
 
             # Tenure bins: 0-12, 13-36, 37+
             tenure_bin = stats.get("tenure_bin", "13-36")
             if tenure_bin == "0-12":
-                record["tenure"] = np.random.uniform(0, 12)
+                record["tenure"] = 6.0
             elif tenure_bin == "13-36":
-                record["tenure"] = np.random.uniform(13, 36)
+                record["tenure"] = 24.5
             else:
-                record["tenure"] = np.random.uniform(37, 72)
+                record["tenure"] = 54.5
 
             # Monthly charges bins: low (<35), medium (35-70), high (>70)
             mc_bin = stats.get("monthly_charges_bin", "medium")
             if mc_bin == "low":
-                record["monthly_charges"] = np.random.uniform(18, 35)
+                record["monthly_charges"] = 26.5
             elif mc_bin == "medium":
-                record["monthly_charges"] = np.random.uniform(35, 70)
+                record["monthly_charges"] = 52.5
             else:
-                record["monthly_charges"] = np.random.uniform(70, 120)
+                record["monthly_charges"] = 95.0
 
             # Total charges bins: low (<500), medium (500-2000), high (>2000)
             tc_bin = stats.get("total_charges_bin", "medium")
             if tc_bin == "low":
-                record["total_charges"] = np.random.uniform(18, 500)
+                record["total_charges"] = 259.0
             elif tc_bin == "medium":
-                record["total_charges"] = np.random.uniform(500, 2000)
+                record["total_charges"] = 1250.0
             else:
-                record["total_charges"] = np.random.uniform(2000, 8000)
+                record["total_charges"] = 5000.0
 
             # Senior citizen is stored as-is
             record["senior_citizen"] = stats.get("senior_citizen", 0)
@@ -313,9 +315,15 @@ class DriftMonitorService:
             reference_numeric = reference_df[numeric_only_features]
             current_numeric = current_df[numeric_only_features]
 
-            # Generate synthetic reference predictions for comparison
-            # Based on reference data churn rate
-            reference_predictions = np.random.uniform(0, 1, len(reference_df))
+            # Use actual target values from training data as reference predictions
+            # This represents the true baseline distribution
+            ref_full = load_dataset(Path(self.config.reference_dataset_path))
+            if TARGET_COLUMN in ref_full.columns:
+                reference_predictions = ref_full[TARGET_COLUMN].values.astype(float)
+            else:
+                # Fallback: use uniform distribution matching churn rate ~0.27
+                reference_predictions = np.zeros(len(reference_df))
+                reference_predictions[: int(len(reference_df) * 0.27)] = 1.0
 
             # Run drift detection
             drift_result = self.drift_calculator.detect_drift(

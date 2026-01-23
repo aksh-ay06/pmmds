@@ -1,10 +1,8 @@
 """Prefect flows for drift monitoring."""
 
-from datetime import timedelta
 from typing import Any
 
 from prefect import flow, get_run_logger, task
-from prefect.tasks import task_input_hash
 
 from apps.monitor.config import DriftConfig, get_drift_config
 from apps.monitor.service import DriftMonitorService
@@ -16,8 +14,6 @@ from shared.drift.metrics import DriftResult
     name="initialize-drift-monitor",
     retries=2,
     retry_delay_seconds=30,
-    cache_key_fn=task_input_hash,
-    cache_expiration=timedelta(hours=1),
 )
 def initialize_monitor(config: DriftConfig | None = None) -> DriftMonitorService:
     """Initialize drift monitoring service.

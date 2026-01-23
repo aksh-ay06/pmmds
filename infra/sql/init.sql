@@ -28,8 +28,8 @@ CREATE INDEX IF NOT EXISTS idx_prediction_logs_model
 CREATE INDEX IF NOT EXISTS idx_prediction_logs_request_id 
     ON prediction_logs (request_id);
 
--- Drift detection results table (for future use)
-CREATE TABLE IF NOT EXISTS drift_results (
+-- Drift detection results table
+CREATE TABLE IF NOT EXISTS drift_metrics (
     id SERIAL PRIMARY KEY,
     run_id UUID UNIQUE NOT NULL,
     timestamp TIMESTAMPTZ NOT NULL,
@@ -43,8 +43,8 @@ CREATE TABLE IF NOT EXISTS drift_results (
     metadata JSONB NOT NULL DEFAULT '{}'
 );
 
-CREATE INDEX IF NOT EXISTS idx_drift_results_timestamp 
-    ON drift_results (timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_drift_metrics_timestamp
+    ON drift_metrics (timestamp DESC);
 
 -- Model registry metadata (supplement to MLflow)
 CREATE TABLE IF NOT EXISTS model_metadata (

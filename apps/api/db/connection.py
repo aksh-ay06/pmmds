@@ -55,6 +55,9 @@ async def init_db() -> None:
     """
     from apps.api.db.models import Base
 
+    # Import monitor models so they register with the shared Base
+    import apps.monitor.db  # noqa: F401
+
     async with async_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     logger.info("database_initialized")

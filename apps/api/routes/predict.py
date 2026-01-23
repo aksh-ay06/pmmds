@@ -1,6 +1,7 @@
 """Prediction endpoint."""
 
 import hashlib
+import json
 import time
 from datetime import datetime, timezone
 
@@ -9,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.api.db import PredictionLogDB, get_db_session
 from apps.api.models import get_model_loader
-from apps.api.schemas import PredictionLog, PredictionRequest, PredictionResponse
+from apps.api.schemas import PredictionRequest, PredictionResponse
 from shared.utils import get_logger, get_metrics
 from shared.validation import validate_inference_payload
 
@@ -27,9 +28,8 @@ def compute_feature_hash(features: dict) -> str:
     Returns:
         Hex digest of feature hash.
     """
-    # Sort keys for consistent hashing
-    sorted_items = sorted(features.items())
-    feature_str = str(sorted_items).encode("utf-8")
+    # Use JSON with sorted keys for consistent, version-independent hashing
+    feature_str = json.dumps(features, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(feature_str).hexdigest()
 
 

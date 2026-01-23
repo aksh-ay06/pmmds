@@ -50,6 +50,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     yield
 
+    # Cleanup database connection pool
+    from apps.api.db.connection import async_engine
+
+    await async_engine.dispose()
     logger.info("application_shutting_down")
 
 
@@ -85,7 +89,7 @@ def create_app() -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],  # Restrict in production
-        allow_credentials=True,
+        allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
     )

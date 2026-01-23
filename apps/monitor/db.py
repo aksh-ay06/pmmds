@@ -12,13 +12,12 @@ from sqlalchemy import (
     String,
     Text,
 )
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column
 
+from apps.api.db.models import Base
 
-class MonitorBase(DeclarativeBase):
-    """Base class for monitoring database models."""
-
-    pass
+# Use the same Base as the API for unified schema management
+MonitorBase = Base
 
 
 class DriftMetricDB(MonitorBase):

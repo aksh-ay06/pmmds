@@ -12,11 +12,9 @@ import hashlib
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 import mlflow
-import pandas as pd
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
@@ -28,7 +26,6 @@ from pipelines.train.trainer import ChurnModelTrainer, TrainingConfig, TrainingM
 from shared.config import get_settings
 from shared.data.dataset import TARGET_COLUMN, get_feature_target_split, load_dataset
 from shared.utils import get_logger, get_metrics
-from shared.validation import validate_dataframe
 
 logger = get_logger(__name__)
 settings = get_settings()
@@ -180,6 +177,7 @@ class RetrainingService:
             "training_challenger",
             run_id=run_id,
             trigger_type=trigger_type,
+            drift_info=drift_info,
         )
 
         # Initialize trainer

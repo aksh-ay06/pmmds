@@ -1,14 +1,23 @@
 """FastAPI middleware for metrics collection and request logging."""
 
+import re
 import time
+import uuid
 from collections.abc import Awaitable, Callable
 
+import structlog
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
 from shared.utils import get_logger
 from shared.utils.metrics import get_metrics
+
+# Compiled regex patterns for path normalization
+_UUID_PATTERN = re.compile(
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+    re.IGNORECASE,
+)
 
 logger = get_logger(__name__)
 
@@ -113,15 +122,8 @@ class MetricsMiddleware(BaseHTTPMiddleware):
         Returns:
             Normalized path.
         """
-        import re
-
         # Replace UUIDs
-        path = re.sub(
-            r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
-            "{id}",
-            path,
-            flags=re.IGNORECASE,
-        )
+        path = _UUID_PATTERN.sub("{id}", path)
         # Replace numeric IDs
         path = re.sub(r"/\d+(/|$)", "/{id}\\1", path)
 
@@ -189,13 +191,9 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         # Generate or extract request ID
         request_id = request.headers.get("x-request-id", "")
         if not request_id:
-            import uuid
-
             request_id = str(uuid.uuid4())
 
         # Add request ID to structlog context
-        import structlog
-
         structlog.contextvars.clear_contextvars()
         structlog.contextvars.bind_contextvars(request_id=request_id)
 

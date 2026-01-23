@@ -126,14 +126,7 @@ class Histogram:
                         f'{label}="{key[i]}"' for i, label in enumerate(self.labels)
                     )
 
-                # Bucket lines
-                cumulative = 0
-                for bucket in self.buckets:
-                    cumulative += bucket_counts[bucket] - (
-                        bucket_counts.get(self.buckets[self.buckets.index(bucket) - 1], 0)
-                        if self.buckets.index(bucket) > 0
-                        else 0
-                    )
+                # Bucket lines (counts are already cumulative from observe())
                 for bucket in self.buckets:
                     if label_prefix:
                         lines.append(
