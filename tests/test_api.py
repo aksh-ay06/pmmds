@@ -1,4 +1,4 @@
-"""Tests for API endpoints."""
+"""Tests for the prediction API endpoint."""
 
 from typing import Any
 
@@ -7,42 +7,14 @@ from httpx import AsyncClient
 
 
 @pytest.mark.asyncio
-async def test_health_check(client: AsyncClient) -> None:
-    """Test health endpoint returns expected fields."""
-    response = await client.get("/healthz")
-
+async def test_predict_valid_request(client: AsyncClient, sample_features: dict[str, Any]) -> None:
+    """Test prediction with valid features."""
+    response = await client.post("/api/v1/predict", json={"features": sample_features})
     assert response.status_code == 200
+
     data = response.json()
-    assert "status" in data
-    assert "timestamp" in data
-    assert "version" in data
-
-
-@pytest.mark.asyncio
-async def test_readiness_check(client: AsyncClient) -> None:
-    """Test readiness endpoint."""
-    response = await client.get("/ready")
-
-    assert response.status_code == 200
-    assert response.json() == {"status": "ready"}
-
-
-@pytest.mark.asyncio
-async def test_predict_success(
-    client: AsyncClient, sample_features: dict[str, Any]
-) -> None:
-    """Test successful prediction request."""
-    payload = {"features": sample_features}
-
-    response = await client.post("/api/v1/predict", json=payload)
-
-    assert response.status_code == 200
-    data = response.json()
-    assert "request_id" in data
-    assert "prediction" in data
-    assert data["prediction"] in [0, 1]
-    assert "probability" in data
-    assert 0.0 <= data["probability"] <= 1.0
+    assert "predicted_fare" in data
+    assert data["predicted_fare"] > 0
     assert "model_name" in data
     assert "model_version" in data
     assert "latency_ms" in data
@@ -50,47 +22,106 @@ async def test_predict_success(
 
 
 @pytest.mark.asyncio
-async def test_predict_with_custom_request_id(
-    client: AsyncClient, sample_features: dict[str, Any]
-) -> None:
-    """Test prediction with custom request ID."""
-    request_id = "550e8400-e29b-41d4-a716-446655440000"
-    payload = {"request_id": request_id, "features": sample_features}
-
-    response = await client.post("/api/v1/predict", json=payload)
-
-    assert response.status_code == 200
-    data = response.json()
-    assert data["request_id"] == request_id
-
-
-@pytest.mark.asyncio
-async def test_predict_invalid_payload(client: AsyncClient) -> None:
-    """Test prediction with invalid payload."""
-    payload = {"features": {"invalid_field": "value"}}
-
-    response = await client.post("/api/v1/predict", json=payload)
-
-    assert response.status_code == 422  # Validation error
-
-
-@pytest.mark.asyncio
-async def test_predict_missing_features(client: AsyncClient) -> None:
-    """Test prediction with missing features."""
-    payload = {}
-
-    response = await client.post("/api/v1/predict", json=payload)
-
+async def test_predict_missing_feature(client: AsyncClient, sample_features: dict[str, Any]) -> None:
+    """Test prediction with missing required feature."""
+    del sample_features["trip_distance"]
+    response = await client.post("/api/v1/predict", json={"features": sample_features})
     assert response.status_code == 422
 
 
 @pytest.mark.asyncio
-async def test_openapi_docs(client: AsyncClient) -> None:
-    """Test OpenAPI documentation is available."""
-    response = await client.get("/openapi.json")
+async def test_predict_invalid_trip_distance(client: AsyncClient, sample_features: dict[str, Any]) -> None:
+    """Test prediction with trip_distance out of range."""
+    sample_features["trip_distance"] = 200.0  # Max is 100
+    response = await client.post("/api/v1/predict", json={"features": sample_features})
+    assert response.status_code == 422
 
+
+@pytest.mark.asyncio
+async def test_predict_invalid_passenger_count(client: AsyncClient, sample_features: dict[str, Any]) -> None:
+    """Test prediction with invalid passenger count."""
+    sample_features["passenger_count"] = 0  # Min is 1
+    response = await client.post("/api/v1/predict", json={"features": sample_features})
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_predict_invalid_borough(client: AsyncClient, sample_features: dict[str, Any]) -> None:
+    """Test prediction with invalid borough name."""
+    sample_features["pickup_borough"] = "Atlantis"
+    response = await client.post("/api/v1/predict", json={"features": sample_features})
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_predict_invalid_rate_code(client: AsyncClient, sample_features: dict[str, Any]) -> None:
+    """Test prediction with invalid rate code."""
+    sample_features["RatecodeID"] = 10  # Max is 6
+    response = await client.post("/api/v1/predict", json={"features": sample_features})
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_predict_extra_field_rejected(client: AsyncClient, sample_features: dict[str, Any]) -> None:
+    """Test that extra fields are rejected (strict schema)."""
+    sample_features["extra_field"] = "value"
+    response = await client.post("/api/v1/predict", json={"features": sample_features})
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_predict_custom_request_id(client: AsyncClient, sample_features: dict[str, Any]) -> None:
+    """Test prediction with custom request ID."""
+    import uuid
+
+    req_id = str(uuid.uuid4())
+    response = await client.post(
+        "/api/v1/predict",
+        json={"request_id": req_id, "features": sample_features},
+    )
     assert response.status_code == 200
-    data = response.json()
-    assert "openapi" in data
-    assert "paths" in data
-    assert "/api/v1/predict" in data["paths"]
+    assert response.json()["request_id"] == req_id
+
+
+@pytest.mark.asyncio
+async def test_predict_rush_hour_trip(client: AsyncClient) -> None:
+    """Test prediction for rush hour trip."""
+    features = {
+        "trip_distance": 5.0,
+        "passenger_count": 1,
+        "pickup_hour": 17,
+        "pickup_day_of_week": 4,
+        "pickup_month": 1,
+        "trip_duration_minutes": 25.0,
+        "is_weekend": 0,
+        "is_rush_hour": 1,
+        "RatecodeID": 1,
+        "payment_type": 1,
+        "pickup_borough": "Manhattan",
+        "dropoff_borough": "Manhattan",
+    }
+    response = await client.post("/api/v1/predict", json={"features": features})
+    assert response.status_code == 200
+    assert response.json()["predicted_fare"] > 0
+
+
+@pytest.mark.asyncio
+async def test_predict_weekend_trip(client: AsyncClient) -> None:
+    """Test prediction for weekend trip."""
+    features = {
+        "trip_distance": 8.0,
+        "passenger_count": 4,
+        "pickup_hour": 22,
+        "pickup_day_of_week": 7,
+        "pickup_month": 2,
+        "trip_duration_minutes": 30.0,
+        "is_weekend": 1,
+        "is_rush_hour": 0,
+        "RatecodeID": 1,
+        "payment_type": 2,
+        "pickup_borough": "Brooklyn",
+        "dropoff_borough": "Queens",
+    }
+    response = await client.post("/api/v1/predict", json={"features": features})
+    assert response.status_code == 200
+    assert response.json()["predicted_fare"] > 0

@@ -1,49 +1,52 @@
-"""Prediction request/response schemas.
-
-These schemas define the contract for the inference API.
-Feature names follow the Telco Churn dataset convention.
-"""
+"""Prediction request/response schemas for NYC Yellow Taxi fare prediction."""
 
 from datetime import datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from shared.data.locations import VALID_BOROUGHS
 
 
 class FeaturePayload(BaseModel):
-    """Input features for prediction.
+    """Input features for fare prediction.
 
-    Based on Telco Customer Churn dataset.
-    Numeric and categorical features for churn prediction.
+    NYC Yellow Taxi trip features covering distance, time, location,
+    and trip characteristics.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    # Customer demographics
-    gender: str = Field(..., description="Customer gender (Male/Female)")
-    senior_citizen: int = Field(..., ge=0, le=1, description="Is senior citizen (0/1)")
-    partner: str = Field(..., description="Has partner (Yes/No)")
-    dependents: str = Field(..., description="Has dependents (Yes/No)")
+    # Numeric features
+    trip_distance: float = Field(..., ge=0.1, le=100.0, description="Trip distance in miles")
+    passenger_count: int = Field(..., ge=1, le=6, description="Number of passengers")
+    pickup_hour: int = Field(..., ge=0, le=23, description="Hour of pickup (0-23)")
+    pickup_day_of_week: int = Field(..., ge=1, le=7, description="Day of week (1=Sun, 7=Sat)")
+    pickup_month: int = Field(..., ge=1, le=12, description="Month of pickup (1-12)")
+    trip_duration_minutes: float = Field(..., ge=1.0, le=180.0, description="Trip duration in minutes")
 
-    # Account information
-    tenure: int = Field(..., ge=0, description="Months with company")
-    contract: str = Field(..., description="Contract type")
-    paperless_billing: str = Field(..., description="Paperless billing (Yes/No)")
-    payment_method: str = Field(..., description="Payment method")
-    monthly_charges: float = Field(..., ge=0, description="Monthly charges ($)")
-    total_charges: float = Field(..., ge=0, description="Total charges ($)")
+    # Binary features
+    is_weekend: int = Field(..., ge=0, le=1, description="Weekend indicator (0/1)")
+    is_rush_hour: int = Field(..., ge=0, le=1, description="Rush hour indicator (0/1)")
 
-    # Services
-    phone_service: str = Field(..., description="Has phone service (Yes/No)")
-    multiple_lines: str = Field(..., description="Has multiple lines")
-    internet_service: str = Field(..., description="Internet service type")
-    online_security: str = Field(..., description="Has online security")
-    online_backup: str = Field(..., description="Has online backup")
-    device_protection: str = Field(..., description="Has device protection")
-    tech_support: str = Field(..., description="Has tech support")
-    streaming_tv: str = Field(..., description="Has streaming TV")
-    streaming_movies: str = Field(..., description="Has streaming movies")
+    # Categorical features
+    RatecodeID: int = Field(..., ge=1, le=6, description="Rate code (1=Standard, 2=JFK, etc.)")
+    payment_type: int = Field(..., ge=1, le=4, description="Payment type (1=Card, 2=Cash, 3=No charge, 4=Dispute)")
+    pickup_borough: str = Field(..., description="Pickup borough")
+    dropoff_borough: str = Field(..., description="Dropoff borough")
+
+    @field_validator("pickup_borough", "dropoff_borough")
+    @classmethod
+    def validate_borough(cls, v: str) -> str:
+        """Validate borough is one of the known NYC boroughs."""
+        if v not in VALID_BOROUGHS:
+            raise ValueError(f"Invalid borough: {v}. Must be one of {VALID_BOROUGHS}")
+        return v
+
+    def to_feature_dict(self) -> dict[str, Any]:
+        """Convert to flat feature dictionary for model input."""
+        return self.model_dump()
 
 
 class PredictionRequest(BaseModel):
@@ -52,27 +55,21 @@ class PredictionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     request_id: UUID = Field(default_factory=uuid4, description="Unique request ID")
-    features: FeaturePayload = Field(..., description="Input features")
+    features: FeaturePayload = Field(..., description="Trip features for fare prediction")
 
 
 class PredictionResponse(BaseModel):
     """Inference response payload."""
 
     request_id: UUID = Field(..., description="Request ID for tracing")
-    prediction: int = Field(..., description="Predicted class (0=No Churn, 1=Churn)")
-    probability: float = Field(
-        ..., ge=0.0, le=1.0, description="Probability of churn"
-    )
-    model_name: str = Field(..., description="Model used for prediction")
-    model_version: str = Field(..., description="Model version")
+    predicted_fare: float = Field(..., description="Predicted fare amount in USD")
+    model_name: str = Field(..., description="Model name used for prediction")
+    model_version: str = Field(..., description="Model version used")
     latency_ms: float = Field(..., ge=0, description="Inference latency in ms")
 
 
 class PredictionLog(BaseModel):
-    """Schema for logging predictions to database.
-
-    Stores metadata without raw PII. Features are hashed/aggregated.
-    """
+    """Schema for logging predictions to database."""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -85,8 +82,7 @@ class PredictionLog(BaseModel):
     model_version: str = Field(..., description="Model version")
 
     # Prediction output
-    prediction: int = Field(..., description="Predicted class")
-    probability: float = Field(..., description="Prediction probability")
+    predicted_fare: float = Field(..., description="Predicted fare amount")
     latency_ms: float = Field(..., description="Inference latency")
 
     # Feature statistics (no raw values)

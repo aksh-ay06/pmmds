@@ -213,19 +213,20 @@ Prefect >= 2.x
 
 6) Dataset guidelines
 
-Use a reproducible public dataset with mixed feature types.
+Dataset: NYC TLC Yellow Taxi Trip Records (Parquet format from https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page)
 
-Examples:
+Task: Fare amount regression (predict fare_amount from trip features)
 
-Telco churn
+Features (12 total):
+- Numeric (6): trip_distance, passenger_count, pickup_hour, pickup_day_of_week, pickup_month, trip_duration_minutes
+- Binary (2): is_weekend, is_rush_hour
+- Categorical (4): RatecodeID, payment_type, pickup_borough, dropoff_borough
 
-Credit default
+Target: fare_amount (continuous, USD)
 
-Adult income
+Processing: PySpark reads raw TLC Parquet, extracts time features, computes trip_duration, maps LocationIDs to boroughs, filters outliers. Output: data/processed/{train,test}.parquet + reference.csv
 
-NYC taxi trips
-
-Include a download/prepare script.
+Download script: scripts/download_data.py
 
 7) Engineering standards
 
@@ -243,29 +244,36 @@ Docker-first execution
 
 8) Drift metrics
 
-PSI for numeric features
+PSI for numeric features (n_bins=20 for continuous fare/distance values)
 
-JS/KL divergence for categoricals
+JS/KL divergence for categoricals (boroughs, payment_type, RatecodeID)
+
+Prediction drift: PSI on predicted_fare distribution (continuous regression output)
 
 Retrain trigger if:
 
 ≥3 features PSI > 0.2
 
-Prediction distribution shift
+Prediction distribution shift (fare predictions diverge from reference)
 
 Validation failure rate exceeds threshold
 
 9) Model promotion logic
 
-Champion vs challenger
+Champion vs challenger (regression: GBTRegressor via PySpark MLlib)
+
+Primary metric: RMSE (lower is better)
+Secondary metrics: MAE, R2, MAPE
 
 Promotion requires:
 
 Validation pass
 
-Metric improvement
+RMSE improvement ≥ 0.5 (challenger RMSE must be at least 0.5 lower than champion)
 
 No latency regression
+
+Models served via MLflow pyfunc with pre-warmed SparkSession
 
 Record all decisions with metadata.
 

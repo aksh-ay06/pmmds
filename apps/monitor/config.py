@@ -1,107 +1,57 @@
-"""Drift monitoring configuration."""
+"""Drift monitoring configuration for NYC Yellow Taxi."""
 
-from pydantic import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from dataclasses import dataclass, field
 
 
-class DriftConfig(BaseSettings):
-    """Configuration for drift monitoring.
+@dataclass
+class DriftConfig:
+    """Configuration for drift detection."""
 
-    Loads from environment variables with PMMDS_DRIFT_ prefix.
-    """
+    # Reference data
+    reference_data_path: str = "data/processed/reference.csv"
 
-    model_config = SettingsConfigDict(
-        env_prefix="PMMDS_DRIFT_",
-        env_file=".env",
-        env_file_encoding="utf-8",
-        extra="ignore",
-    )
+    # Monitoring window
+    window_hours: int = 24
+    min_samples: int = 100
 
     # PSI thresholds
-    psi_threshold: float = Field(
-        default=0.2,
-        description="PSI threshold for individual feature drift detection",
-    )
-    prediction_psi_threshold: float = Field(
-        default=0.2,
-        description="PSI threshold for prediction drift",
-    )
+    psi_threshold_warning: float = 0.1
+    psi_threshold_critical: float = 0.2
 
-    # Drift detection trigger
-    min_drift_features: int = Field(
-        default=3,
-        description="Minimum number of features with drift to trigger alert",
-    )
+    # Drift trigger for retraining (from CLAUDE.md)
+    min_features_for_retrain: int = 3
 
-    # Window configuration
-    reference_window_days: int = Field(
-        default=30,
-        description="Number of days for reference window (training data)",
-    )
-    current_window_hours: int = Field(
-        default=24,
-        description="Number of hours for current/recent inference window",
-    )
-    min_samples_required: int = Field(
-        default=100,
-        description="Minimum samples required for drift detection",
-    )
+    # Numeric features to monitor (continuous values stored in stats)
+    numeric_features: list[str] = field(default_factory=lambda: [
+        "trip_distance",
+        "trip_duration_minutes",
+        "passenger_count",
+        "pickup_hour",
+        "pickup_day_of_week",
+        "is_weekend",
+        "is_rush_hour",
+    ])
 
-    # Monitoring schedule
-    monitor_interval_hours: int = Field(
-        default=1,
-        description="Hours between drift monitoring runs",
-    )
-    enable_scheduled_monitoring: bool = Field(
-        default=True,
-        description="Enable scheduled drift monitoring",
-    )
+    # Categorical features to monitor
+    categorical_features: list[str] = field(default_factory=lambda: [
+        "pickup_borough",
+        "dropoff_borough",
+        "RatecodeID",
+        "payment_type",
+    ])
 
-    # Alert settings
-    enable_alerts: bool = Field(
-        default=True,
-        description="Enable drift alerts",
-    )
-    alert_on_prediction_drift: bool = Field(
-        default=True,
-        description="Alert when prediction distribution drifts",
-    )
+    # Prediction drift monitoring
+    monitor_prediction_drift: bool = True
+    prediction_feature_name: str = "predicted_fare"
+    prediction_psi_threshold: float = 0.15
 
-    # Feature configuration
-    numeric_features: list[str] = Field(
-        default=["tenure", "monthly_charges", "total_charges"],
-        description="Numeric features to monitor for drift",
-    )
-    categorical_features: list[str] = Field(
-        default=[
-            "gender",
-            "partner",
-            "dependents",
-            "phone_service",
-            "multiple_lines",
-            "internet_service",
-            "online_security",
-            "online_backup",
-            "device_protection",
-            "tech_support",
-            "streaming_tv",
-            "streaming_movies",
-            "contract",
-            "paperless_billing",
-            "payment_method",
-        ],
-        description="Categorical features to monitor for drift",
-    )
+    # Database
+    db_url: str | None = None
 
-    # Reference dataset
-    reference_dataset_path: str = Field(
-        default="data/processed/train.csv",
-        description="Path to reference dataset",
-    )
-    use_training_data_as_reference: bool = Field(
-        default=True,
-        description="Use training data as reference distribution",
-    )
+    @property
+    def all_features(self) -> list[str]:
+        """Get all monitored features."""
+        return self.numeric_features + self.categorical_features
 
 
 def get_drift_config() -> DriftConfig:

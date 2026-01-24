@@ -65,7 +65,7 @@ services:
       PMMDS_DB_PASSWORD: pmmds
       PMMDS_DB_NAME: pmmds
       PMMDS_MLFLOW_TRACKING_URI: http://mlflow:5000
-      PMMDS_MODEL_NAME: churn-classifier
+      PMMDS_MODEL_NAME: nyc-taxi-fare
       PMMDS_MODEL_ALIAS: production
       PMMDS_API_DEBUG: "false"
       PMMDS_LOG_LEVEL: INFO

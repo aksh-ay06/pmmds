@@ -1,6 +1,7 @@
 """Model loader with MLflow registry support.
 
-Loads models from MLflow registry with fallback to dummy model.
+Loads PySpark models from MLflow registry with fallback to dummy model.
+Pre-warms SparkSession at startup for low-latency inference.
 """
 
 import random
@@ -19,14 +20,14 @@ settings = get_settings()
 class Model(Protocol):
     """Protocol for model interface."""
 
-    def predict(self, features: dict[str, Any]) -> tuple[int, float]:
-        """Generate prediction from features.
+    def predict(self, features: dict[str, Any]) -> float:
+        """Generate fare prediction from features.
 
         Args:
             features: Dictionary of feature name -> value.
 
         Returns:
-            Tuple of (predicted_class, probability).
+            Predicted fare amount.
         """
         ...
 
@@ -45,13 +46,11 @@ class Model(Protocol):
 class DummyModel:
     """Stub model for development/fallback.
 
-    Returns random predictions with realistic probability distribution.
-    Simulates ~27% churn rate (typical for telco datasets).
+    Returns fare predictions based on trip distance and duration.
     """
 
     _name: str = settings.model_name
     _version: str = "0.0.1-stub"
-    _base_churn_rate: float = 0.27
 
     @property
     def name(self) -> str:
@@ -63,64 +62,43 @@ class DummyModel:
         """Model version."""
         return self._version
 
-    def predict(self, features: dict[str, Any]) -> tuple[int, float]:
-        """Generate dummy prediction.
+    def predict(self, features: dict[str, Any]) -> float:
+        """Generate dummy fare prediction.
 
-        Uses feature values to create deterministic-ish predictions
-        for testing consistency, with some randomness.
+        Uses trip distance and duration to create realistic fare estimates.
 
         Args:
             features: Input feature dictionary.
 
         Returns:
-            Tuple of (predicted_class, probability).
+            Predicted fare amount.
         """
-        # Create a seed from features for semi-deterministic behavior
-        seed_value = hash(frozenset(features.items())) % (2**32)
+        seed_value = hash(frozenset(
+            (k, v) for k, v in features.items() if not isinstance(v, (list, dict))
+        )) % (2**32)
         rng = random.Random(seed_value)
 
-        # Base probability influenced by some key features
-        base_prob = self._base_churn_rate
+        # Base fare ($3.00) + per-mile rate ($2.50) + per-minute rate ($0.50)
+        trip_distance = features.get("trip_distance", 3.0)
+        trip_duration = features.get("trip_duration_minutes", 15.0)
 
-        # Adjust based on tenure (lower tenure = higher churn risk)
-        tenure = features.get("tenure", 12)
-        if tenure < 6:
-            base_prob += 0.15
-        elif tenure > 48:
-            base_prob -= 0.10
+        base_fare = 3.00
+        distance_fare = trip_distance * 2.50
+        time_fare = trip_duration * 0.50
 
-        # Adjust based on contract type
-        contract = features.get("contract", "Month-to-month")
-        if contract == "Month-to-month":
-            base_prob += 0.10
-        elif contract == "Two year":
-            base_prob -= 0.15
+        # Rush hour surcharge
+        is_rush_hour = features.get("is_rush_hour", 0)
+        rush_surcharge = 2.50 if is_rush_hour else 0.0
 
-        # Adjust based on monthly charges
-        monthly_charges = features.get("monthly_charges", 50.0)
-        if monthly_charges > 80:
-            base_prob += 0.05
+        fare = base_fare + distance_fare + time_fare + rush_surcharge
+        noise = rng.gauss(0, 1.0)
+        fare = max(2.50, fare + noise)
 
-        # Add noise and clamp
-        noise = rng.gauss(0, 0.05)
-        probability = max(0.01, min(0.99, base_prob + noise))
-
-        # Determine class with threshold
-        prediction = 1 if probability > 0.5 else 0
-
-        logger.debug(
-            "dummy_prediction",
-            prediction=prediction,
-            probability=probability,
-            tenure=tenure,
-            contract=contract,
-        )
-
-        return prediction, round(probability, 4)
+        return round(fare, 2)
 
 
 class MLflowModel:
-    """Wrapper for MLflow sklearn model."""
+    """Wrapper for MLflow pyfunc model (PySpark under the hood)."""
 
     def __init__(
         self,
@@ -131,7 +109,7 @@ class MLflowModel:
         """Initialize MLflow model wrapper.
 
         Args:
-            model: Loaded sklearn pipeline from MLflow.
+            model: Loaded pyfunc model from MLflow.
             model_name: Registered model name.
             model_version: Model version string.
         """
@@ -149,26 +127,30 @@ class MLflowModel:
         """Model version."""
         return self._version
 
-    def predict(self, features: dict[str, Any]) -> tuple[int, float]:
-        """Generate prediction using MLflow model.
+    def predict(self, features: dict[str, Any]) -> float:
+        """Generate fare prediction using MLflow pyfunc model.
 
         Args:
             features: Input feature dictionary.
 
         Returns:
-            Tuple of (predicted_class, probability).
+            Predicted fare amount.
         """
         import pandas as pd
 
-        # Convert to DataFrame (sklearn pipeline expects DataFrame)
-        df = pd.DataFrame([features])
+        # Convert to DataFrame (pyfunc expects DataFrame input)
+        # Cast categoricals to string as training expects
+        features_copy = features.copy()
+        features_copy["RatecodeID"] = str(features_copy.get("RatecodeID", 1))
+        features_copy["payment_type"] = str(features_copy.get("payment_type", 1))
 
-        # Get prediction and probability
-        prediction = int(self._model.predict(df)[0])
-        probabilities = self._model.predict_proba(df)[0]
-        probability = float(probabilities[1])  # Probability of class 1 (churn)
+        df = pd.DataFrame([features_copy])
 
-        return prediction, round(probability, 4)
+        # Get prediction
+        prediction = self._model.predict(df)
+        fare = float(prediction[0])
+
+        return round(max(2.50, fare), 2)
 
 
 class ModelLoader:
@@ -226,8 +208,8 @@ class ModelLoader:
             )
             version_str = model_version.version
 
-            # Load the model
-            loaded_model = mlflow.sklearn.load_model(model_uri)
+            # Load as pyfunc (handles Spark models transparently)
+            loaded_model = mlflow.pyfunc.load_model(model_uri)
 
             logger.info(
                 "model_loaded_from_mlflow",

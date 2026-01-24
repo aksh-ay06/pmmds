@@ -1,8 +1,8 @@
-"""Model comparison and promotion logic.
+"""Model comparison and promotion logic for regression models.
 
 Implements champion vs challenger comparison following CLAUDE.md rules:
 - Validation must pass
-- Metric improvement required
+- RMSE must decrease (lower is better)
 - No latency regression
 """
 
@@ -23,28 +23,25 @@ settings = get_settings()
 
 @dataclass
 class ModelMetrics:
-    """Container for model evaluation metrics."""
+    """Container for regression model evaluation metrics."""
 
-    accuracy: float = 0.0
-    precision: float = 0.0
-    recall: float = 0.0
-    f1: float = 0.0
-    roc_auc: float = 0.0
+    rmse: float = 0.0
+    mae: float = 0.0
+    r2: float = 0.0
+    mape: float = 0.0
     avg_latency_ms: float = 0.0
     p95_latency_ms: float = 0.0
     validation_passed: bool = True
     validation_errors: list[str] = field(default_factory=list)
     model_version: str = ""
 
-
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
-            "accuracy": self.accuracy,
-            "precision": self.precision,
-            "recall": self.recall,
-            "f1": self.f1,
-            "roc_auc": self.roc_auc,
+            "rmse": self.rmse,
+            "mae": self.mae,
+            "r2": self.r2,
+            "mape": self.mape,
             "avg_latency_ms": self.avg_latency_ms,
             "p95_latency_ms": self.p95_latency_ms,
             "validation_passed": self.validation_passed,
@@ -85,18 +82,16 @@ class ComparisonResult:
 
 
 class ModelComparator:
-    """Compare champion and challenger models for promotion decisions.
+    """Compare champion and challenger regression models for promotion decisions.
 
-    Follows promotion rules from CLAUDE.md:
-    1. Validation must pass
-    2. Primary metric must improve
-    3. Latency must not regress beyond threshold
+    For regression, lower RMSE is better, so improvement is measured
+    as champion_rmse - challenger_rmse (positive = challenger is better).
     """
 
     def __init__(
         self,
-        primary_metric: str = "roc_auc",
-        min_improvement: float = 0.001,  # 0.1% improvement required
+        primary_metric: str = "rmse",
+        min_improvement: float = 0.5,  # RMSE reduction of at least 0.5
         max_latency_regression: float = 1.2,  # Allow up to 20% latency increase
         latency_samples: int = 100,
         tracking_uri: str | None = None,
@@ -104,9 +99,9 @@ class ModelComparator:
         """Initialize model comparator.
 
         Args:
-            primary_metric: Primary metric for comparison (default: roc_auc).
-            min_improvement: Minimum improvement required (0.001 = 0.1%).
-            max_latency_regression: Max acceptable latency ratio (1.2 = 20% slower OK).
+            primary_metric: Primary metric for comparison (default: rmse).
+            min_improvement: Minimum RMSE reduction required.
+            max_latency_regression: Max acceptable latency ratio.
             latency_samples: Number of samples for latency testing.
             tracking_uri: MLflow tracking URI.
         """
@@ -124,17 +119,17 @@ class ModelComparator:
         model_name: str,
         version: str,
     ) -> Any:
-        """Load a specific model version from MLflow.
+        """Load a specific model version from MLflow as pyfunc.
 
         Args:
             model_name: Registered model name.
             version: Model version.
 
         Returns:
-            Loaded sklearn model/pipeline.
+            Loaded pyfunc model.
         """
         model_uri = f"models:/{model_name}/{version}"
-        return mlflow.sklearn.load_model(model_uri)
+        return mlflow.pyfunc.load_model(model_uri)
 
     def load_model_by_alias(
         self,
@@ -154,20 +149,8 @@ class ModelComparator:
         model_version = self._client.get_model_version_by_alias(
             name=model_name, alias=alias
         )
-        model = mlflow.sklearn.load_model(model_uri)
+        model = mlflow.pyfunc.load_model(model_uri)
         return model, model_version.version
-
-    def get_metrics_from_run(self, run_id: str) -> dict[str, float]:
-        """Get metrics from an MLflow run.
-
-        Args:
-            run_id: MLflow run ID.
-
-        Returns:
-            Dictionary of metric name -> value.
-        """
-        run = self._client.get_run(run_id)
-        return run.data.metrics
 
     def evaluate_model(
         self,
@@ -175,35 +158,49 @@ class ModelComparator:
         X_test: pd.DataFrame,
         y_test: pd.Series,
     ) -> ModelMetrics:
-        """Evaluate a model on test data.
+        """Evaluate a regression model on test data.
 
         Args:
-            model: Sklearn model/pipeline.
+            model: MLflow pyfunc model.
             X_test: Test features.
-            y_test: Test labels.
+            y_test: Test labels (fare_amount).
 
         Returns:
             ModelMetrics with evaluation results.
         """
-        from sklearn.metrics import (
-            accuracy_score,
-            f1_score,
-            precision_score,
-            recall_score,
-            roc_auc_score,
-        )
+        # Cast categoricals to string as the Spark model expects
+        X_eval = X_test.copy()
+        if "RatecodeID" in X_eval.columns:
+            X_eval["RatecodeID"] = X_eval["RatecodeID"].astype(str)
+        if "payment_type" in X_eval.columns:
+            X_eval["payment_type"] = X_eval["payment_type"].astype(str)
 
         # Get predictions
-        y_pred = model.predict(X_test)
-        y_prob = model.predict_proba(X_test)[:, 1]
+        y_pred = model.predict(X_eval)
 
-        # Compute metrics
+        actual = y_test.values.astype(float)
+        predicted = np.array(y_pred, dtype=float)
+
+        # RMSE
+        rmse = float(np.sqrt(np.mean((actual - predicted) ** 2)))
+
+        # MAE
+        mae = float(np.mean(np.abs(actual - predicted)))
+
+        # R2
+        ss_res = np.sum((actual - predicted) ** 2)
+        ss_tot = np.sum((actual - np.mean(actual)) ** 2)
+        r2 = float(1 - ss_res / max(ss_tot, 1e-10))
+
+        # MAPE
+        mask = actual > 0
+        mape = float(np.mean(np.abs((actual[mask] - predicted[mask]) / actual[mask])) * 100)
+
         metrics = ModelMetrics(
-            accuracy=accuracy_score(y_test, y_pred),
-            precision=precision_score(y_test, y_pred, zero_division=0),
-            recall=recall_score(y_test, y_pred, zero_division=0),
-            f1=f1_score(y_test, y_pred, zero_division=0),
-            roc_auc=roc_auc_score(y_test, y_prob),
+            rmse=rmse,
+            mae=mae,
+            r2=r2,
+            mape=mape,
         )
 
         return metrics
@@ -216,7 +213,7 @@ class ModelComparator:
         """Measure inference latency for a model.
 
         Args:
-            model: Sklearn model/pipeline.
+            model: MLflow pyfunc model.
             X_sample: Sample data for inference.
 
         Returns:
@@ -225,9 +222,16 @@ class ModelComparator:
         n_samples = min(self.latency_samples, len(X_sample))
         sample_indices = np.random.choice(len(X_sample), n_samples, replace=False)
 
+        # Cast categoricals
+        X_eval = X_sample.copy()
+        if "RatecodeID" in X_eval.columns:
+            X_eval["RatecodeID"] = X_eval["RatecodeID"].astype(str)
+        if "payment_type" in X_eval.columns:
+            X_eval["payment_type"] = X_eval["payment_type"].astype(str)
+
         latencies = []
         for idx in sample_indices:
-            row = X_sample.iloc[[idx]]
+            row = X_eval.iloc[[idx]]
             start = time.perf_counter()
             _ = model.predict(row)
             elapsed = (time.perf_counter() - start) * 1000  # ms
@@ -249,7 +253,9 @@ class ModelComparator:
         challenger_validation_passed: bool = True,
         challenger_validation_errors: list[str] | None = None,
     ) -> ComparisonResult:
-        """Compare champion and challenger models.
+        """Compare champion and challenger regression models.
+
+        For RMSE, lower is better. Improvement = champion_rmse - challenger_rmse.
 
         Args:
             champion_model: Current production model.
@@ -257,7 +263,7 @@ class ModelComparator:
             challenger_model: Newly trained model.
             challenger_version: Challenger model version.
             X_test: Test features for evaluation.
-            y_test: Test labels.
+            y_test: Test target values.
             challenger_validation_passed: Whether challenger passed validation.
             challenger_validation_errors: Validation error messages.
 
@@ -278,6 +284,7 @@ class ModelComparator:
         champ_avg_lat, champ_p95_lat = self.measure_latency(champion_model, X_test)
         champion_metrics.avg_latency_ms = champ_avg_lat
         champion_metrics.p95_latency_ms = champ_p95_lat
+        champion_metrics.model_version = champion_version
 
         # Evaluate challenger
         challenger_metrics = self.evaluate_model(challenger_model, X_test, y_test)
@@ -286,6 +293,7 @@ class ModelComparator:
         challenger_metrics.p95_latency_ms = chal_p95_lat
         challenger_metrics.validation_passed = challenger_validation_passed
         challenger_metrics.validation_errors = challenger_validation_errors or []
+        challenger_metrics.model_version = challenger_version
 
         # Check validation
         if not challenger_validation_passed:
@@ -293,16 +301,19 @@ class ModelComparator:
                 f"Validation failed: {challenger_validation_errors}"
             )
 
-        # Check metric improvement
+        # Check metric improvement (for RMSE, lower is better)
         champion_primary = getattr(champion_metrics, self.primary_metric)
         challenger_primary = getattr(challenger_metrics, self.primary_metric)
-        improvement = challenger_primary - champion_primary
+
+        # Improvement = champion_rmse - challenger_rmse (positive means challenger is better)
+        improvement = champion_primary - challenger_primary
         metric_improved = improvement >= self.min_improvement
 
         if not metric_improved:
             rejection_reasons.append(
-                f"Insufficient {self.primary_metric} improvement: "
-                f"{improvement:.4f} < {self.min_improvement:.4f} required"
+                f"Insufficient {self.primary_metric} reduction: "
+                f"{improvement:.4f} < {self.min_improvement:.4f} required "
+                f"(champion={champion_primary:.4f}, challenger={challenger_primary:.4f})"
             )
 
         # Check latency
@@ -328,7 +339,7 @@ class ModelComparator:
             promotion_reason = (
                 f"Challenger v{challenger_version} outperforms champion v{champion_version}. "
                 f"{self.primary_metric}: {challenger_primary:.4f} vs {champion_primary:.4f} "
-                f"(+{improvement:.4f}). Validation passed. Latency OK ({latency_ratio:.2f}x)."
+                f"(reduction: {improvement:.4f}). Validation passed. Latency OK ({latency_ratio:.2f}x)."
             )
         else:
             promotion_reason = f"Challenger v{challenger_version} rejected: {'; '.join(rejection_reasons)}"
@@ -349,8 +360,8 @@ class ModelComparator:
         logger.info(
             "comparison_complete",
             should_promote=should_promote,
-            champion_metric=champion_primary,
-            challenger_metric=challenger_primary,
+            champion_rmse=champion_primary,
+            challenger_rmse=challenger_primary,
             improvement=improvement,
             latency_ratio=latency_ratio,
         )

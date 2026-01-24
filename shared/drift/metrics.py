@@ -331,7 +331,7 @@ class DriftMetrics:
         numeric_features: list[str],
         categorical_features: list[str] | None = None,
         psi_threshold: float = 0.2,
-        n_bins: int = 10,
+        n_bins: int = 20,
     ):
         """Initialize drift metrics calculator.
 

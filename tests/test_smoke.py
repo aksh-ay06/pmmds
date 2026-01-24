@@ -12,7 +12,7 @@ from httpx import AsyncClient
 async def test_smoke_health_endpoint(client: AsyncClient) -> None:
     """Smoke test: Health endpoint responds."""
     response = await client.get("/healthz")
-    assert response.status_code in [200, 503]  # May be degraded without real DB
+    assert response.status_code in [200, 503]
     data = response.json()
     assert "status" in data
     assert "version" in data
@@ -48,28 +48,21 @@ async def test_smoke_metrics_json(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_smoke_predict_valid_payload(client: AsyncClient) -> None:
-    """Smoke test: Prediction with valid payload."""
+    """Smoke test: Prediction with valid taxi trip payload."""
     payload = {
         "features": {
-            "gender": "Male",
-            "senior_citizen": 0,
-            "partner": "Yes",
-            "dependents": "No",
-            "tenure": 12,
-            "contract": "Month-to-month",
-            "paperless_billing": "Yes",
-            "payment_method": "Electronic check",
-            "monthly_charges": 70.35,
-            "total_charges": 840.20,
-            "phone_service": "Yes",
-            "multiple_lines": "No",
-            "internet_service": "Fiber optic",
-            "online_security": "No",
-            "online_backup": "No",
-            "device_protection": "No",
-            "tech_support": "No",
-            "streaming_tv": "No",
-            "streaming_movies": "No",
+            "trip_distance": 3.5,
+            "passenger_count": 2,
+            "pickup_hour": 14,
+            "pickup_day_of_week": 3,
+            "pickup_month": 1,
+            "trip_duration_minutes": 15.0,
+            "is_weekend": 0,
+            "is_rush_hour": 0,
+            "RatecodeID": 1,
+            "payment_type": 1,
+            "pickup_borough": "Manhattan",
+            "dropoff_borough": "Brooklyn",
         }
     }
 
@@ -78,112 +71,86 @@ async def test_smoke_predict_valid_payload(client: AsyncClient) -> None:
 
     data = response.json()
     assert "request_id" in data
-    assert "prediction" in data
-    assert data["prediction"] in [0, 1]
-    assert "probability" in data
-    assert 0.0 <= data["probability"] <= 1.0
+    assert "predicted_fare" in data
+    assert data["predicted_fare"] > 0
     assert "model_name" in data
     assert "latency_ms" in data
 
 
 @pytest.mark.asyncio
-async def test_smoke_predict_high_risk_customer(client: AsyncClient) -> None:
-    """Smoke test: Prediction for high churn risk customer."""
-    # High risk profile: Month-to-month, short tenure, high charges
+async def test_smoke_predict_short_trip(client: AsyncClient) -> None:
+    """Smoke test: Prediction for a short trip."""
     payload = {
         "features": {
-            "gender": "Female",
-            "senior_citizen": 1,
-            "partner": "No",
-            "dependents": "No",
-            "tenure": 1,
-            "contract": "Month-to-month",
-            "paperless_billing": "Yes",
-            "payment_method": "Electronic check",
-            "monthly_charges": 95.00,
-            "total_charges": 95.00,
-            "phone_service": "Yes",
-            "multiple_lines": "Yes",
-            "internet_service": "Fiber optic",
-            "online_security": "No",
-            "online_backup": "No",
-            "device_protection": "No",
-            "tech_support": "No",
-            "streaming_tv": "Yes",
-            "streaming_movies": "Yes",
+            "trip_distance": 0.5,
+            "passenger_count": 1,
+            "pickup_hour": 10,
+            "pickup_day_of_week": 2,
+            "pickup_month": 1,
+            "trip_duration_minutes": 3.0,
+            "is_weekend": 0,
+            "is_rush_hour": 0,
+            "RatecodeID": 1,
+            "payment_type": 1,
+            "pickup_borough": "Manhattan",
+            "dropoff_borough": "Manhattan",
         }
     }
 
     response = await client.post("/api/v1/predict", json=payload)
     assert response.status_code == 200
     data = response.json()
-    # High risk customers typically have higher probability
-    assert data["prediction"] in [0, 1]
+    assert data["predicted_fare"] > 0
 
 
 @pytest.mark.asyncio
-async def test_smoke_predict_low_risk_customer(client: AsyncClient) -> None:
-    """Smoke test: Prediction for low churn risk customer."""
-    # Low risk profile: Two year contract, long tenure, low charges
+async def test_smoke_predict_long_trip(client: AsyncClient) -> None:
+    """Smoke test: Prediction for a long trip (JFK rate)."""
     payload = {
         "features": {
-            "gender": "Male",
-            "senior_citizen": 0,
-            "partner": "Yes",
-            "dependents": "Yes",
-            "tenure": 72,
-            "contract": "Two year",
-            "paperless_billing": "No",
-            "payment_method": "Bank transfer (automatic)",
-            "monthly_charges": 25.00,
-            "total_charges": 1800.00,
-            "phone_service": "Yes",
-            "multiple_lines": "No",
-            "internet_service": "DSL",
-            "online_security": "Yes",
-            "online_backup": "Yes",
-            "device_protection": "Yes",
-            "tech_support": "Yes",
-            "streaming_tv": "No",
-            "streaming_movies": "No",
+            "trip_distance": 20.0,
+            "passenger_count": 3,
+            "pickup_hour": 18,
+            "pickup_day_of_week": 5,
+            "pickup_month": 2,
+            "trip_duration_minutes": 45.0,
+            "is_weekend": 0,
+            "is_rush_hour": 1,
+            "RatecodeID": 2,
+            "payment_type": 1,
+            "pickup_borough": "Queens",
+            "dropoff_borough": "Manhattan",
         }
     }
 
     response = await client.post("/api/v1/predict", json=payload)
     assert response.status_code == 200
     data = response.json()
-    assert data["prediction"] in [0, 1]
+    assert data["predicted_fare"] > 0
 
 
 @pytest.mark.asyncio
-async def test_smoke_predict_invalid_contract(client: AsyncClient) -> None:
-    """Smoke test: Prediction with invalid contract value."""
+async def test_smoke_predict_invalid_borough(client: AsyncClient) -> None:
+    """Smoke test: Prediction with invalid borough."""
     payload = {
         "features": {
-            "gender": "Male",
-            "senior_citizen": 0,
-            "partner": "Yes",
-            "dependents": "No",
-            "tenure": 12,
-            "contract": "Invalid Contract",  # Invalid value
-            "paperless_billing": "Yes",
-            "payment_method": "Electronic check",
-            "monthly_charges": 70.35,
-            "total_charges": 840.20,
-            "phone_service": "Yes",
-            "multiple_lines": "No",
-            "internet_service": "Fiber optic",
-            "online_security": "No",
-            "online_backup": "No",
-            "device_protection": "No",
-            "tech_support": "No",
-            "streaming_tv": "No",
-            "streaming_movies": "No",
+            "trip_distance": 3.0,
+            "passenger_count": 1,
+            "pickup_hour": 12,
+            "pickup_day_of_week": 4,
+            "pickup_month": 1,
+            "trip_duration_minutes": 10.0,
+            "is_weekend": 0,
+            "is_rush_hour": 0,
+            "RatecodeID": 1,
+            "payment_type": 1,
+            "pickup_borough": "InvalidBorough",
+            "dropoff_borough": "Manhattan",
         }
     }
 
     response = await client.post("/api/v1/predict", json=payload)
-    assert response.status_code == 422  # Validation error
+    assert response.status_code == 422
 
 
 @pytest.mark.asyncio
@@ -208,4 +175,4 @@ async def test_smoke_model_info(client: AsyncClient) -> None:
     data = response.json()
     assert "name" in data
     assert "version" in data
-    assert "source" in data
+    assert "tracking_uri" in data

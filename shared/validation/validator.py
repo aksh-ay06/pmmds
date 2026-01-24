@@ -11,6 +11,7 @@ from typing import Any
 import pandas as pd
 
 from shared.utils import get_logger
+from shared.data.dataset import TARGET_COLUMN
 from shared.validation.expectations import (
     CATEGORICAL_VALUES,
     FEATURE_EXPECTATIONS,
@@ -125,7 +126,7 @@ class DataValidator:
                 expectations = [
                     e
                     for e in expectations
-                    if e.get("kwargs", {}).get("column") != "churn"
+                    if e.get("kwargs", {}).get("column") != TARGET_COLUMN
                 ]
 
             # Create a validator
@@ -216,7 +217,7 @@ class DataValidator:
 
         features_to_check = FEATURE_EXPECTATIONS.copy()
         if not include_target:
-            features_to_check.pop("churn", None)
+            features_to_check.pop(TARGET_COLUMN, None)
 
         for col_name, config in features_to_check.items():
             if col_name not in df.columns:
@@ -357,7 +358,7 @@ def validate_inference_payload(
 
     # Get expected features (exclude target)
     expected_features = {
-        k: v for k, v in FEATURE_EXPECTATIONS.items() if k != "churn"
+        k: v for k, v in FEATURE_EXPECTATIONS.items() if k != TARGET_COLUMN
     }
 
     # Check for missing features

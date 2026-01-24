@@ -1,11 +1,10 @@
 """Drift monitoring service.
 
 Compares reference data distribution against recent inference data
-to detect feature and prediction drift.
+to detect feature and prediction drift for NYC Yellow Taxi fare prediction.
 """
 
 import hashlib
-import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -16,13 +15,10 @@ from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import Session
 
 from apps.monitor.config import DriftConfig, get_drift_config
-from apps.monitor.db import DriftAlertDB, DriftMetricDB, MonitorBase, ReferenceDatasetDB
+from apps.monitor.db import DriftAlertDB, DriftMetricDB, MonitorBase
 from shared.config import get_settings
 from shared.data.dataset import (
-    CATEGORICAL_FEATURES,
-    NUMERIC_FEATURES,
     TARGET_COLUMN,
-    compute_dataset_stats,
     load_dataset,
 )
 from shared.drift.metrics import DriftMetrics, DriftResult, DriftSeverity
@@ -61,7 +57,7 @@ class DriftMonitorService:
         self.drift_calculator = DriftMetrics(
             numeric_features=self.config.numeric_features,
             categorical_features=self.config.categorical_features,
-            psi_threshold=self.config.psi_threshold,
+            psi_threshold=self.config.psi_threshold_critical,
         )
 
         # Ensure monitoring tables exist
@@ -69,8 +65,8 @@ class DriftMonitorService:
 
         logger.info(
             "drift_monitor_initialized",
-            psi_threshold=self.config.psi_threshold,
-            min_drift_features=self.config.min_drift_features,
+            psi_threshold=self.config.psi_threshold_critical,
+            min_drift_features=self.config.min_features_for_retrain,
             numeric_features=len(self.config.numeric_features),
             categorical_features=len(self.config.categorical_features),
         )
@@ -102,7 +98,7 @@ class DriftMonitorService:
         Raises:
             FileNotFoundError: If reference data not found.
         """
-        ref_path = Path(self.config.reference_dataset_path)
+        ref_path = Path(self.config.reference_data_path)
 
         if not ref_path.exists():
             raise FileNotFoundError(
@@ -132,8 +128,7 @@ class DriftMonitorService:
     ) -> tuple[pd.DataFrame, dict[str, Any]]:
         """Fetch recent inference data from prediction logs.
 
-        Since we store feature hashes and binned stats (not raw values),
-        we reconstruct approximate distributions from the logged stats.
+        Reconstructs feature distributions from the logged numeric_feature_stats.
 
         Args:
             window_hours: Hours of data to fetch.
@@ -142,7 +137,7 @@ class DriftMonitorService:
         Returns:
             Tuple of (DataFrame with reconstructed features, window metadata).
         """
-        window_hours = window_hours or self.config.current_window_hours
+        window_hours = window_hours or self.config.window_hours
         settings = get_settings()
         model_name = model_name or settings.model_name
 
@@ -150,12 +145,11 @@ class DriftMonitorService:
         start_time = end_time - timedelta(hours=window_hours)
 
         query = text("""
-            SELECT 
+            SELECT
                 timestamp,
                 model_name,
                 model_version,
-                prediction,
-                probability,
+                predicted_fare,
                 numeric_feature_stats
             FROM prediction_logs
             WHERE timestamp >= :start_time
@@ -190,55 +184,36 @@ class DriftMonitorService:
         # Reconstruct data from logged stats
         data = []
         predictions = []
-        probabilities = []
 
         for row in rows:
-            # Extract binned stats
             stats = row.numeric_feature_stats or {}
 
-            # Reconstruct approximate values from bins using midpoints
-            # (deterministic to ensure reproducible drift results)
+            # Reconstruct numeric features from stored values
             record = {}
+            record["trip_distance"] = stats.get("trip_distance", 3.0)
+            record["trip_duration_minutes"] = stats.get("trip_duration_minutes", 15.0)
+            record["passenger_count"] = stats.get("passenger_count", 1)
+            record["pickup_hour"] = stats.get("pickup_hour", 12)
 
-            # Tenure bins: 0-12, 13-36, 37+
-            tenure_bin = stats.get("tenure_bin", "13-36")
-            if tenure_bin == "0-12":
-                record["tenure"] = 6.0
-            elif tenure_bin == "13-36":
-                record["tenure"] = 24.5
-            else:
-                record["tenure"] = 54.5
+            # Reconstruct pickup_day_of_week from is_weekend
+            is_weekend = stats.get("is_weekend", 0)
+            record["pickup_day_of_week"] = 1 if is_weekend else 3  # Sun or Wed
+            record["is_weekend"] = is_weekend
+            record["is_rush_hour"] = stats.get("is_rush_hour", 0)
 
-            # Monthly charges bins: low (<35), medium (35-70), high (>70)
-            mc_bin = stats.get("monthly_charges_bin", "medium")
-            if mc_bin == "low":
-                record["monthly_charges"] = 26.5
-            elif mc_bin == "medium":
-                record["monthly_charges"] = 52.5
-            else:
-                record["monthly_charges"] = 95.0
-
-            # Total charges bins: low (<500), medium (500-2000), high (>2000)
-            tc_bin = stats.get("total_charges_bin", "medium")
-            if tc_bin == "low":
-                record["total_charges"] = 259.0
-            elif tc_bin == "medium":
-                record["total_charges"] = 1250.0
-            else:
-                record["total_charges"] = 5000.0
-
-            # Senior citizen is stored as-is
-            record["senior_citizen"] = stats.get("senior_citizen", 0)
+            # Categorical features
+            record["pickup_borough"] = stats.get("pickup_borough", "Manhattan")
+            record["dropoff_borough"] = stats.get("dropoff_borough", "Manhattan")
+            record["RatecodeID"] = stats.get("RatecodeID", 1)
+            record["payment_type"] = stats.get("payment_type", 1)
 
             data.append(record)
-            predictions.append(row.prediction)
-            probabilities.append(row.probability)
+            predictions.append(row.predicted_fare)
 
         df = pd.DataFrame(data)
 
         # Add predictions for prediction drift
-        df["_prediction"] = predictions
-        df["_probability"] = probabilities
+        df["_predicted_fare"] = predictions
 
         window_metadata = {
             "start_time": start_time.isoformat(),
@@ -294,41 +269,45 @@ class DriftMonitorService:
             )
 
             # Check minimum sample requirement
-            if len(current_df) < self.config.min_samples_required:
+            if len(current_df) < self.config.min_samples:
                 logger.warning(
                     "insufficient_samples",
                     current_samples=len(current_df),
-                    required=self.config.min_samples_required,
+                    required=self.config.min_samples,
                 )
                 return None
 
             # Extract predictions for prediction drift
-            current_predictions = current_df["_probability"].values
-            current_df = current_df.drop(columns=["_prediction", "_probability"])
+            current_predictions = current_df["_predicted_fare"].values
+            current_df = current_df.drop(columns=["_predicted_fare"])
 
-            # Use numeric features only (categorical not available from logs)
-            numeric_only_features = [
+            # Find common features between reference and current
+            numeric_features = [
                 f for f in self.config.numeric_features
                 if f in reference_df.columns and f in current_df.columns
             ]
+            categorical_features = [
+                f for f in self.config.categorical_features
+                if f in reference_df.columns and f in current_df.columns
+            ]
 
-            reference_numeric = reference_df[numeric_only_features]
-            current_numeric = current_df[numeric_only_features]
+            all_features = numeric_features + categorical_features
+            reference_subset = reference_df[all_features]
+            current_subset = current_df[all_features]
 
-            # Use actual target values from training data as reference predictions
-            # This represents the true baseline distribution
-            ref_full = load_dataset(Path(self.config.reference_dataset_path))
+            # Use fare_amount from reference as reference predictions
+            ref_full = load_dataset(Path(self.config.reference_data_path))
             if TARGET_COLUMN in ref_full.columns:
                 reference_predictions = ref_full[TARGET_COLUMN].values.astype(float)
             else:
-                # Fallback: use uniform distribution matching churn rate ~0.27
-                reference_predictions = np.zeros(len(reference_df))
-                reference_predictions[: int(len(reference_df) * 0.27)] = 1.0
+                # Fallback: generate synthetic fare distribution
+                reference_predictions = np.random.default_rng(42).normal(15.0, 10.0, len(reference_df))
+                reference_predictions = np.clip(reference_predictions, 2.5, 200.0)
 
             # Run drift detection
             drift_result = self.drift_calculator.detect_drift(
-                reference_df=reference_numeric,
-                current_df=current_numeric,
+                reference_df=reference_subset,
+                current_df=current_subset,
                 reference_predictions=reference_predictions,
                 current_predictions=current_predictions,
                 timestamp=timestamp.isoformat(),
@@ -347,7 +326,7 @@ class DriftMonitorService:
             )
 
             # Create alert if drift detected
-            if drift_result.drift_detected and self.config.enable_alerts:
+            if drift_result.drift_detected:
                 self._create_drift_alert(
                     run_id=run_id,
                     timestamp=timestamp,
@@ -391,21 +370,10 @@ class DriftMonitorService:
         drift_result: DriftResult,
         window_meta: dict[str, Any],
     ) -> None:
-        """Store drift result in database.
-
-        Args:
-            run_id: Unique run ID.
-            timestamp: Detection timestamp.
-            model_name: Model name.
-            model_version: Model version.
-            drift_result: Drift detection result.
-            window_meta: Window metadata.
-        """
-        # Parse window times
+        """Store drift result in database."""
         current_start = datetime.fromisoformat(window_meta["start_time"])
         current_end = datetime.fromisoformat(window_meta["end_time"])
 
-        # Build feature drift details
         feature_details = {
             fd.feature_name: fd.to_dict()
             for fd in drift_result.feature_drifts
@@ -416,7 +384,7 @@ class DriftMonitorService:
             timestamp=timestamp,
             model_name=model_name,
             model_version=model_version,
-            reference_window_start=None,  # Training data, no specific time
+            reference_window_start=None,
             reference_window_end=None,
             current_window_start=current_start,
             current_window_end=current_end,
@@ -438,8 +406,8 @@ class DriftMonitorService:
                 if drift_result.prediction_drift
                 else False
             ),
-            psi_threshold=self.config.psi_threshold,
-            min_drift_features=self.config.min_drift_features,
+            psi_threshold=self.config.psi_threshold_critical,
+            min_drift_features=self.config.min_features_for_retrain,
         )
 
         with Session(self.engine) as session:
@@ -458,14 +426,7 @@ class DriftMonitorService:
         timestamp: datetime,
         drift_result: DriftResult,
     ) -> None:
-        """Create drift alert in database.
-
-        Args:
-            run_id: Drift run ID.
-            timestamp: Alert timestamp.
-            drift_result: Drift detection result.
-        """
-        # Determine severity
+        """Create drift alert in database."""
         if drift_result.max_psi >= 0.25:
             severity = "high"
         elif drift_result.max_psi >= 0.2:
@@ -479,7 +440,6 @@ class DriftMonitorService:
             f"Max PSI: {drift_result.max_psi:.3f}, Avg PSI: {drift_result.avg_psi:.3f}"
         )
 
-        # Get the drift metric ID
         with Session(self.engine) as session:
             result = session.execute(
                 select(DriftMetricDB.id).where(DriftMetricDB.run_id == run_id)
@@ -511,15 +471,7 @@ class DriftMonitorService:
         hours: int = 24,
         model_name: str | None = None,
     ) -> dict[str, Any]:
-        """Get drift summary for recent period.
-
-        Args:
-            hours: Number of hours to summarize.
-            model_name: Filter by model name.
-
-        Returns:
-            Summary dictionary.
-        """
+        """Get drift summary for recent period."""
         settings = get_settings()
         model_name = model_name or settings.model_name
 
@@ -564,11 +516,7 @@ class DriftMonitorService:
         }
 
     def get_unacknowledged_alerts(self) -> list[dict[str, Any]]:
-        """Get all unacknowledged drift alerts.
-
-        Returns:
-            List of alert dictionaries.
-        """
+        """Get all unacknowledged drift alerts."""
         with Session(self.engine) as session:
             query = select(DriftAlertDB).where(
                 DriftAlertDB.acknowledged == False  # noqa: E712

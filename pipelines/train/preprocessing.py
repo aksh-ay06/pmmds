@@ -1,13 +1,11 @@
-"""Feature preprocessing pipeline."""
+"""Feature preprocessing pipeline using PySpark ML."""
 
-from typing import Any
-
-import numpy as np
-import pandas as pd
-from sklearn.compose import ColumnTransformer
-from sklearn.impute import SimpleImputer
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OneHotEncoder, StandardScaler
+from pyspark.ml import Pipeline
+from pyspark.ml.feature import (
+    OneHotEncoder,
+    StringIndexer,
+    VectorAssembler,
+)
 
 from shared.data.dataset import (
     BINARY_FEATURES,
@@ -18,115 +16,76 @@ from shared.utils import get_logger
 
 logger = get_logger(__name__)
 
+# Categorical features that are string type (need StringIndexer)
+STRING_CATEGORICAL_FEATURES = ["pickup_borough", "dropoff_borough"]
+# Categorical features that are already numeric (just need OneHotEncoder via indexer)
+NUMERIC_CATEGORICAL_FEATURES = ["RatecodeID", "payment_type"]
 
-def create_preprocessor() -> ColumnTransformer:
-    """Create sklearn preprocessing pipeline.
+
+def create_spark_preprocessing_pipeline() -> Pipeline:
+    """Create PySpark ML preprocessing pipeline.
+
+    Stages:
+    1. StringIndexer for string categorical features
+    2. StringIndexer for numeric categorical features (treats as categorical)
+    3. OneHotEncoder for all indexed features
+    4. VectorAssembler to combine all features
 
     Returns:
-        ColumnTransformer for feature preprocessing.
+        PySpark ML Pipeline for preprocessing.
     """
-    # Numeric features: impute + scale
-    numeric_transformer = Pipeline(
-        steps=[
-            ("imputer", SimpleImputer(strategy="median")),
-            ("scaler", StandardScaler()),
-        ]
-    )
+    stages = []
 
-    # Binary features: pass through (already 0/1)
-    binary_transformer = Pipeline(
-        steps=[
-            ("imputer", SimpleImputer(strategy="most_frequent")),
-        ]
-    )
+    # Index string categorical features
+    indexed_cols = []
+    for col in STRING_CATEGORICAL_FEATURES:
+        indexer = StringIndexer(
+            inputCol=col,
+            outputCol=f"{col}_indexed",
+            handleInvalid="keep",
+        )
+        stages.append(indexer)
+        indexed_cols.append(f"{col}_indexed")
 
-    # Categorical features: impute + one-hot encode
-    categorical_transformer = Pipeline(
-        steps=[
-            ("imputer", SimpleImputer(strategy="constant", fill_value="Unknown")),
-            ("encoder", OneHotEncoder(handle_unknown="ignore", sparse_output=False)),
-        ]
-    )
+    # Index numeric categorical features (cast to string first handled in data prep)
+    for col in NUMERIC_CATEGORICAL_FEATURES:
+        indexer = StringIndexer(
+            inputCol=col,
+            outputCol=f"{col}_indexed",
+            handleInvalid="keep",
+        )
+        stages.append(indexer)
+        indexed_cols.append(f"{col}_indexed")
 
-    preprocessor = ColumnTransformer(
-        transformers=[
-            ("numeric", numeric_transformer, NUMERIC_FEATURES),
-            ("binary", binary_transformer, BINARY_FEATURES),
-            ("categorical", categorical_transformer, CATEGORICAL_FEATURES),
-        ],
-        remainder="drop",
-        verbose_feature_names_out=True,
+    # OneHotEncoder for all indexed columns
+    encoded_cols = []
+    for col in indexed_cols:
+        encoded_col = col.replace("_indexed", "_encoded")
+        encoder = OneHotEncoder(
+            inputCol=col,
+            outputCol=encoded_col,
+            handleInvalid="keep",
+        )
+        stages.append(encoder)
+        encoded_cols.append(encoded_col)
+
+    # Assemble all features into a single vector
+    assembler_inputs = NUMERIC_FEATURES + BINARY_FEATURES + encoded_cols
+    assembler = VectorAssembler(
+        inputCols=assembler_inputs,
+        outputCol="features",
+        handleInvalid="skip",
     )
+    stages.append(assembler)
+
+    pipeline = Pipeline(stages=stages)
 
     logger.info(
-        "preprocessor_created",
+        "spark_preprocessing_pipeline_created",
         numeric_features=len(NUMERIC_FEATURES),
         binary_features=len(BINARY_FEATURES),
         categorical_features=len(CATEGORICAL_FEATURES),
+        total_stages=len(stages),
     )
 
-    return preprocessor
-
-
-def get_feature_names(preprocessor: ColumnTransformer, X: pd.DataFrame) -> list[str]:
-    """Get feature names after preprocessing.
-
-    Args:
-        preprocessor: Fitted ColumnTransformer.
-        X: Sample input DataFrame (for getting categories).
-
-    Returns:
-        List of feature names after transformation.
-    """
-    try:
-        return list(preprocessor.get_feature_names_out())
-    except Exception:
-        # Fallback for older sklearn versions
-        feature_names = []
-
-        # Numeric features (unchanged names)
-        feature_names.extend([f"numeric__{col}" for col in NUMERIC_FEATURES])
-
-        # Binary features
-        feature_names.extend([f"binary__{col}" for col in BINARY_FEATURES])
-
-        # Categorical features (one-hot encoded)
-        cat_transformer = preprocessor.named_transformers_["categorical"]
-        encoder = cat_transformer.named_steps["encoder"]
-        for i, col in enumerate(CATEGORICAL_FEATURES):
-            categories = encoder.categories_[i]
-            for cat in categories:
-                feature_names.append(f"categorical__{col}_{cat}")
-
-        return feature_names
-
-
-def preprocess_single_sample(
-    features: dict[str, Any],
-    preprocessor: ColumnTransformer,
-) -> np.ndarray:
-    """Preprocess a single prediction sample.
-
-    Args:
-        features: Feature dictionary from API request.
-        preprocessor: Fitted ColumnTransformer.
-
-    Returns:
-        Preprocessed feature array.
-    """
-    # Convert to DataFrame with correct column order
-    df = pd.DataFrame([features])
-
-    # Ensure all expected columns exist
-    all_features = NUMERIC_FEATURES + BINARY_FEATURES + CATEGORICAL_FEATURES
-    for col in all_features:
-        if col not in df.columns:
-            df[col] = np.nan
-
-    # Reorder columns
-    df = df[all_features]
-
-    # Transform
-    X_transformed = preprocessor.transform(df)
-
-    return X_transformed
+    return pipeline

@@ -34,9 +34,14 @@ class Settings(BaseSettings):
 
     # MLflow settings
     mlflow_tracking_uri: str = "http://localhost:5000"
-    model_name: str = "churn-classifier"
+    model_name: str = "nyc-taxi-fare"
     model_alias: str = "production"
     model_fallback_to_dummy: bool = True  # Use dummy model if MLflow unavailable
+
+    # Spark settings
+    spark_master: str = "local[*]"
+    spark_driver_memory: str = "2g"
+    spark_app_name: str = "pmmds-taxi"
 
     # Logging
     log_level: str = "INFO"

@@ -12,11 +12,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies (including Java for PySpark)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     libgomp1 \
+    openjdk-21-jre-headless \
     && rm -rf /var/lib/apt/lists/*
+
+ENV JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
 
 # Builder stage
 FROM base as builder

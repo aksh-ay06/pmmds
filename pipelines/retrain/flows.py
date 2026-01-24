@@ -71,8 +71,8 @@ def train_challenger(
 
     logger.info(
         f"Challenger trained: v{version}, "
-        f"ROC-AUC={metrics.roc_auc:.4f}, "
-        f"F1={metrics.f1:.4f}"
+        f"RMSE={metrics.rmse:.4f}, "
+        f"R2={metrics.r2:.4f}"
     )
 
     return metrics.to_dict(), mlflow_run_id, version

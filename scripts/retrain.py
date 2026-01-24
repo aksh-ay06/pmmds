@@ -75,9 +75,9 @@ def run_retraining(
 
             metrics = result.get("challenger_metrics", {})
             print(f"\nChallenger Metrics:")
-            print(f"  ROC-AUC: {metrics.get('roc_auc', 0):.4f}")
-            print(f"  F1 Score: {metrics.get('f1', 0):.4f}")
-            print(f"  Accuracy: {metrics.get('accuracy', 0):.4f}")
+            print(f"  RMSE: {metrics.get('rmse', 0):.4f}")
+            print(f"  MAE: {metrics.get('mae', 0):.4f}")
+            print(f"  R2: {metrics.get('r2', 0):.4f}")
 
             comparison = result.get("comparison", {})
             print(f"\nPromotion Decision:")

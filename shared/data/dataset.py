@@ -1,4 +1,4 @@
-"""Dataset loading utilities."""
+"""Dataset loading utilities for NYC Yellow Taxi fare prediction."""
 
 from pathlib import Path
 from typing import Any
@@ -9,40 +9,40 @@ from shared.utils import get_logger
 
 logger = get_logger(__name__)
 
-# Feature definitions for Telco Churn dataset
-NUMERIC_FEATURES = ["tenure", "monthly_charges", "total_charges"]
-BINARY_FEATURES = ["senior_citizen"]
-CATEGORICAL_FEATURES = [
-    "gender",
-    "partner",
-    "dependents",
-    "phone_service",
-    "multiple_lines",
-    "internet_service",
-    "online_security",
-    "online_backup",
-    "device_protection",
-    "tech_support",
-    "streaming_tv",
-    "streaming_movies",
-    "contract",
-    "paperless_billing",
-    "payment_method",
+# Feature definitions for NYC Yellow Taxi dataset
+NUMERIC_FEATURES = [
+    "trip_distance",
+    "passenger_count",
+    "pickup_hour",
+    "pickup_day_of_week",
+    "pickup_month",
+    "trip_duration_minutes",
 ]
-TARGET_COLUMN = "churn"
+BINARY_FEATURES = ["is_weekend", "is_rush_hour"]
+CATEGORICAL_FEATURES = [
+    "RatecodeID",
+    "payment_type",
+    "pickup_borough",
+    "dropoff_borough",
+]
+TARGET_COLUMN = "fare_amount"
 ALL_FEATURES = NUMERIC_FEATURES + BINARY_FEATURES + CATEGORICAL_FEATURES
 
 
 def load_dataset(path: str | Path) -> pd.DataFrame:
-    """Load dataset from CSV file.
+    """Load dataset from Parquet or CSV file.
 
     Args:
-        path: Path to CSV file.
+        path: Path to data file.
 
     Returns:
         Loaded DataFrame.
     """
-    df = pd.read_csv(path)
+    path = Path(path)
+    if path.suffix == ".parquet":
+        df = pd.read_parquet(path)
+    else:
+        df = pd.read_csv(path)
     logger.info("dataset_loaded", path=str(path), rows=len(df), columns=len(df.columns))
     return df
 
@@ -117,13 +117,17 @@ def compute_dataset_stats(df: pd.DataFrame) -> dict[str, Any]:
             value_counts = df[col].value_counts().to_dict()
             stats["categorical_stats"][col] = {
                 "n_unique": df[col].nunique(),
-                "value_counts": value_counts,
+                "value_counts": {str(k): v for k, v in value_counts.items()},
             }
 
     # Target stats
     if TARGET_COLUMN in df.columns:
-        target_counts = df[TARGET_COLUMN].value_counts().to_dict()
-        stats["target_distribution"] = target_counts
-        stats["target_rate"] = float(df[TARGET_COLUMN].mean())
+        stats["target_stats"] = {
+            "mean": float(df[TARGET_COLUMN].mean()),
+            "std": float(df[TARGET_COLUMN].std()),
+            "min": float(df[TARGET_COLUMN].min()),
+            "max": float(df[TARGET_COLUMN].max()),
+            "median": float(df[TARGET_COLUMN].median()),
+        }
 
     return stats

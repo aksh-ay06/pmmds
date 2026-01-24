@@ -22,7 +22,7 @@ from apps.monitor.config import DriftConfig, get_drift_config
 from apps.monitor.db import DriftMetricDB, MonitorBase
 from pipelines.retrain.comparator import ComparisonResult, ModelComparator
 from pipelines.retrain.db import PromotionBase, PromotionDecisionDB, RetrainingRunDB
-from pipelines.train.trainer import ChurnModelTrainer, TrainingConfig, TrainingMetrics
+from pipelines.train.trainer import TaxiFareTrainer, TrainingConfig, TrainingMetrics
 from shared.config import get_settings
 from shared.data.dataset import TARGET_COLUMN, get_feature_target_split, load_dataset
 from shared.utils import get_logger, get_metrics
@@ -37,20 +37,21 @@ class RetrainingConfig:
     """Configuration for automated retraining."""
 
     # Paths
-    train_data_path: str = "data/processed/train.csv"
-    test_data_path: str = "data/processed/test.csv"
+    train_data_path: str = "data/processed/train.parquet"
+    test_data_path: str = "data/processed/test.parquet"
 
     # Thresholds (from CLAUDE.md)
     min_drift_features: int = 3
     psi_threshold: float = 0.2
 
     # Promotion criteria
-    primary_metric: str = "roc_auc"
-    min_improvement: float = 0.001  # 0.1%
+    primary_metric: str = "rmse"
+    min_improvement: float = 0.5  # RMSE reduction of at least 0.5
     max_latency_regression: float = 1.2  # 20% slower OK
 
     # MLflow settings
-    model_name: str = "churn-classifier"
+    model_name: str = "nyc-taxi-fare"
+    experiment_name: str = "nyc-taxi-fare-prediction"
     production_alias: str = "production"
 
 
@@ -182,11 +183,11 @@ class RetrainingService:
 
         # Initialize trainer
         training_config = TrainingConfig(
-            experiment_name=f"{self.config.model_name}-retrain",
+            experiment_name=f"{self.config.experiment_name}-retrain",
             model_name=self.config.model_name,
             registered_model_name=self.config.model_name,
         )
-        trainer = ChurnModelTrainer(
+        trainer = TaxiFareTrainer(
             config=training_config,
             mlflow_tracking_uri=settings.mlflow_tracking_uri,
         )
@@ -210,7 +211,8 @@ class RetrainingService:
             run_id=run_id,
             mlflow_run_id=mlflow_run_id,
             model_version=model_version,
-            roc_auc=metrics.roc_auc,
+            rmse=metrics.rmse,
+            r2=metrics.r2,
         )
 
         return metrics, mlflow_run_id, str(model_version)
@@ -260,9 +262,9 @@ class RetrainingService:
             return ComparisonResult(
                 champion_metrics=ModelMetrics(),
                 challenger_metrics=ModelMetrics(
-                    roc_auc=challenger_metrics.roc_auc,
-                    accuracy=challenger_metrics.accuracy,
-                    f1=challenger_metrics.f1,
+                    rmse=challenger_metrics.rmse,
+                    mae=challenger_metrics.mae,
+                    r2=challenger_metrics.r2,
                     model_version=challenger_version,
                 ),
                 validation_passed=True,
@@ -270,7 +272,7 @@ class RetrainingService:
                 latency_acceptable=True,
                 should_promote=True,
                 primary_metric_name=self.config.primary_metric,
-                primary_metric_improvement=challenger_metrics.roc_auc,
+                primary_metric_improvement=challenger_metrics.rmse,
                 promotion_reason="First model - auto-promoted as initial champion",
             )
 

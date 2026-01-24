@@ -1,206 +1,190 @@
-"""Prediction endpoint."""
+"""Prediction route for NYC Yellow Taxi fare prediction."""
 
 import hashlib
 import json
 import time
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apps.api.db import PredictionLogDB, get_db_session
-from apps.api.models import get_model_loader
-from apps.api.schemas import PredictionRequest, PredictionResponse
+from apps.api.db import get_db_session
+from apps.api.db.models import PredictionLogDB
+from apps.api.models.loader import get_model_loader
+from apps.api.schemas.predict import (
+    PredictionRequest,
+    PredictionResponse,
+)
 from shared.utils import get_logger, get_metrics
 from shared.validation import validate_inference_payload
 
 logger = get_logger(__name__)
-router = APIRouter(tags=["inference"])
 metrics = get_metrics()
 
-
-def compute_feature_hash(features: dict) -> str:
-    """Compute SHA256 hash of feature vector.
-
-    Args:
-        features: Feature dictionary.
-
-    Returns:
-        Hex digest of feature hash.
-    """
-    # Use JSON with sorted keys for consistent, version-independent hashing
-    feature_str = json.dumps(features, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    return hashlib.sha256(feature_str).hexdigest()
+router = APIRouter(tags=["predictions"])
 
 
-def extract_numeric_stats(features: dict) -> dict:
-    """Extract aggregated statistics from numeric features.
+def _compute_feature_hash(features: dict) -> str:
+    """Compute deterministic hash of feature values."""
+    serialized = json.dumps(features, sort_keys=True, default=str)
+    return hashlib.sha256(serialized.encode()).hexdigest()[:16]
 
-    No raw values stored - only aggregates for drift detection.
 
-    Args:
-        features: Feature dictionary.
-
-    Returns:
-        Dictionary with numeric feature statistics.
-    """
-    numeric_keys = ["tenure", "monthly_charges", "total_charges", "senior_citizen"]
+def _compute_numeric_stats(features: dict) -> dict:
+    """Compute binned stats for numeric features for drift monitoring."""
     stats = {}
 
-    for key in numeric_keys:
-        if key in features:
-            value = features[key]
-            # Store binned ranges instead of exact values
-            if key == "tenure":
-                stats[f"{key}_bin"] = (
-                    "0-12" if value <= 12 else "13-36" if value <= 36 else "37+"
-                )
-            elif key == "monthly_charges":
-                stats[f"{key}_bin"] = (
-                    "low" if value < 35 else "medium" if value < 70 else "high"
-                )
-            elif key == "total_charges":
-                stats[f"{key}_bin"] = (
-                    "low" if value < 500 else "medium" if value < 2000 else "high"
-                )
-            else:
-                stats[key] = value
+    # Trip distance bins
+    trip_distance = features.get("trip_distance", 0)
+    if trip_distance <= 1:
+        stats["trip_distance_bin"] = "0-1"
+    elif trip_distance <= 3:
+        stats["trip_distance_bin"] = "1-3"
+    elif trip_distance <= 5:
+        stats["trip_distance_bin"] = "3-5"
+    elif trip_distance <= 10:
+        stats["trip_distance_bin"] = "5-10"
+    else:
+        stats["trip_distance_bin"] = "10+"
+
+    # Trip duration bins
+    duration = features.get("trip_duration_minutes", 0)
+    if duration <= 5:
+        stats["trip_duration_bin"] = "0-5"
+    elif duration <= 15:
+        stats["trip_duration_bin"] = "5-15"
+    elif duration <= 30:
+        stats["trip_duration_bin"] = "15-30"
+    elif duration <= 60:
+        stats["trip_duration_bin"] = "30-60"
+    else:
+        stats["trip_duration_bin"] = "60+"
+
+    # Hour bins
+    hour = features.get("pickup_hour", 0)
+    if hour < 6:
+        stats["hour_bin"] = "night"
+    elif hour < 10:
+        stats["hour_bin"] = "morning"
+    elif hour < 16:
+        stats["hour_bin"] = "midday"
+    elif hour < 20:
+        stats["hour_bin"] = "evening"
+    else:
+        stats["hour_bin"] = "night"
+
+    # Passenger count
+    stats["passenger_count"] = features.get("passenger_count", 1)
+
+    # Store categorical and numeric features for drift monitoring
+    stats["pickup_borough"] = features.get("pickup_borough", "Unknown")
+    stats["dropoff_borough"] = features.get("dropoff_borough", "Unknown")
+    stats["RatecodeID"] = features.get("RatecodeID", 1)
+    stats["payment_type"] = features.get("payment_type", 1)
+    stats["is_weekend"] = features.get("is_weekend", 0)
+    stats["is_rush_hour"] = features.get("is_rush_hour", 0)
+    stats["trip_distance"] = features.get("trip_distance", 0)
+    stats["trip_duration_minutes"] = features.get("trip_duration_minutes", 0)
 
     return stats
 
 
-@router.post(
-    "/predict",
-    response_model=PredictionResponse,
-    status_code=status.HTTP_200_OK,
-    responses={
-        200: {"description": "Successful prediction"},
-        400: {"description": "Invalid request payload"},
-        500: {"description": "Model inference failed"},
-    },
-)
+@router.post("/predict", response_model=PredictionResponse)
 async def predict(
     request: PredictionRequest,
     db: AsyncSession = Depends(get_db_session),
 ) -> PredictionResponse:
-    """Generate prediction for input features.
-
-    Workflow:
-    1. Validate request payload
-    2. Load current model
-    3. Run inference
-    4. Log prediction metadata (no raw PII)
-    5. Return prediction response
+    """Generate fare prediction for a taxi trip.
 
     Args:
-        request: Prediction request with features.
+        request: Prediction request with trip features.
         db: Database session.
 
     Returns:
-        Prediction response with class and probability.
+        PredictionResponse with predicted fare.
     """
     start_time = time.perf_counter()
+    request_id = request.request_id
 
     try:
-        # Extract features as dict
-        features_dict = request.features.model_dump()
+        # Get feature dict
+        features = request.features.to_feature_dict()
 
-        # Validate inference payload before prediction
-        validation_result = validate_inference_payload(features_dict)
+        # Validate features
+        validation_result = validate_inference_payload(features)
         if not validation_result.success:
-            logger.warning(
-                "validation_failed",
-                request_id=str(request.request_id),
-                errors=validation_result.errors,
-                warnings=validation_result.warnings,
-            )
-            # Record validation failure metric
-            metrics.record_validation_failure(
-                endpoint="/api/v1/predict",
-                failure_type="inference_payload",
-            )
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
+                status_code=422,
                 detail={
-                    "message": "Inference payload validation failed",
+                    "message": "Feature validation failed",
                     "errors": validation_result.errors,
-                    "warnings": validation_result.warnings,
                 },
             )
 
-        # Log warnings even if validation passed
-        if validation_result.warnings:
-            logger.info(
-                "validation_warnings",
-                request_id=str(request.request_id),
-                warnings=validation_result.warnings,
-            )
+        # Get model and predict
+        loader = get_model_loader()
+        model = loader.get_current()
+        predicted_fare = model.predict(features)
 
-        # Get model
-        model_loader = get_model_loader()
-        model = model_loader.get_current()
-
-        # Run inference
-        prediction, probability = model.predict(features_dict)
-
-        # Calculate latency
+        # Compute latency
         latency_ms = (time.perf_counter() - start_time) * 1000
 
-        # Prepare response
+        # Build response
         response = PredictionResponse(
-            request_id=request.request_id,
-            prediction=prediction,
-            probability=probability,
+            request_id=request_id,
+            predicted_fare=predicted_fare,
             model_name=model.name,
             model_version=model.version,
             latency_ms=round(latency_ms, 2),
         )
 
-        # Log to database (async, no raw PII)
-        prediction_log = PredictionLogDB(
-            request_id=request.request_id,
-            timestamp=datetime.now(timezone.utc),
-            model_name=model.name,
-            model_version=model.version,
-            prediction=prediction,
-            probability=probability,
-            latency_ms=latency_ms,
-            feature_hash=compute_feature_hash(features_dict),
-            numeric_feature_stats=extract_numeric_stats(features_dict),
-        )
-        db.add(prediction_log)
-        await db.commit()
+        # Log to database (non-blocking best-effort)
+        try:
+            feature_hash = _compute_feature_hash(features)
+            numeric_stats = _compute_numeric_stats(features)
 
-        # Record prediction metrics
+            log_entry = PredictionLogDB(
+                request_id=str(request_id),
+                timestamp=datetime.now(timezone.utc),
+                model_name=model.name,
+                model_version=model.version,
+                predicted_fare=predicted_fare,
+                latency_ms=latency_ms,
+                feature_hash=feature_hash,
+                numeric_feature_stats=numeric_stats,
+            )
+
+            db.add(log_entry)
+            await db.commit()
+        except Exception as log_error:
+            logger.warning(
+                "prediction_log_failed",
+                error=str(log_error),
+                request_id=str(request_id),
+            )
+
+        # Record metrics
         metrics.record_prediction(
             model_name=model.name,
             model_version=model.version,
-            prediction=prediction,
+            prediction=round(predicted_fare),
             latency_seconds=latency_ms / 1000,
         )
 
-        logger.info(
-            "prediction_completed",
-            request_id=str(request.request_id),
-            prediction=prediction,
-            probability=probability,
-            latency_ms=latency_ms,
-            model_name=model.name,
-            model_version=model.version,
-        )
-
         return response
-    
-    except HTTPException as e:
-        raise  # Re-raise HTTP exceptions as is
+
+    except HTTPException:
+        raise
     except Exception as e:
+        latency_ms = (time.perf_counter() - start_time) * 1000
         logger.error(
             "prediction_failed",
-            request_id=str(request.request_id),
             error=str(e),
             error_type=type(e).__name__,
+            request_id=str(request_id),
+            latency_ms=latency_ms,
         )
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Prediction failed: {type(e).__name__}",
-        ) from e
+            status_code=500,
+            detail={"message": "Prediction failed", "error": str(e)},
+        )
