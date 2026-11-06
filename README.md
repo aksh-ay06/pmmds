@@ -1,10 +1,10 @@
 # PMMDS - Production ML Monitoring & Drift Detection System
 
-[![CI](https://github.com/example/pmmds/workflows/CI/badge.svg)](https://github.com/example/pmmds/actions)
+[![CI](https://github.com/aksh-ay06/pmmds/workflows/CI/badge.svg)](https://github.com/aksh-ay06/pmmds/actions)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A **production-grade ML monitoring system** demonstrating drift detection, automated retraining, and model lifecycle management. Built to showcase FAANG-level MLE skills.
+A **production-grade ML monitoring system** demonstrating drift detection, automated retraining, and model lifecycle management.
 
 ## Key Features
 
@@ -397,35 +397,6 @@ curl http://localhost:5000/health           # MLflow health
 | Drift not detected | Insufficient data | Run `make seed-traffic` |
 | Spark startup slow | JVM cold start | First request warms SparkSession |
 | High latency | Model cold start | Pre-warmed at API startup |
-
-## MLE Skills Demonstrated
-
-| Skill | Implementation |
-|-------|----------------|
-| **ML Systems Design** | End-to-end pipeline: training -> serving -> monitoring -> retraining |
-| **Big Data Processing** | PySpark MLlib for training on ~500K taxi records |
-| **Model Serving** | MLflow pyfunc with pre-warmed SparkSession |
-| **Feature/Prediction Drift** | PSI-based drift detection with configurable thresholds |
-| **Model Registry** | MLflow with versioning, aliases, and promotion workflow |
-| **Automated Retraining** | Champion/challenger comparison on RMSE/MAE/R2 |
-| **Observability** | Prometheus metrics, structured logging, health endpoints |
-| **Infrastructure as Code** | Docker Compose for reproducible local development |
-
-### Resume Bullets
-
-```
-- Designed production ML monitoring system with PSI-based drift detection,
-  triggering automated retraining when >=3 features exceed threshold (PSI > 0.2)
-
-- Built PySpark MLlib training pipeline (GBTRegressor) on NYC Yellow Taxi data
-  (~500K records), achieving competitive RMSE with champion/challenger promotion
-
-- Implemented automated model promotion with objective criteria: RMSE improvement
-  >= 0.5, validation pass, and latency constraint (<= 20% regression)
-
-- Deployed end-to-end MLOps pipeline using MLflow model registry, Prefect
-  orchestration, and PySpark for both training and feature engineering
-```
 
 ## Development
 
